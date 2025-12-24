@@ -47,7 +47,7 @@ page = st.sidebar.selectbox("Navigation", [
 
 if page == "✨ Submit Content":
     st.title("✍️ Submit New Content")
-    st.caption("Thread/Meme auto-adds +6 units to Secret's Engagement on the same posted date.")
+    st.caption("Thread auto-adds +6 units to Secret's Engagement on the same posted date. If OP is a meme NOT a thread, ADD it to Secret's Engagement.")
     
     soldiers = service.get_soldiers()
     soldier_handles = [s["handle"] for s in soldiers] if soldiers else []
@@ -134,13 +134,13 @@ elif page == "🏅 Leaderboard":
         df = pd.DataFrame(cleaned_rows)
         df = df.rename(columns={
             "handle": "Soldier",
-            "score": "Score",
+            "score": "QQ Rating",
             "total_units": "Total",
             "tm": "TM",
             "se": "SE",
             "sh": "SH",
         })
-        df["Score"] = df["Score"].apply(lambda x: f"{x:.2f}")
+        df["QQ Rating"] = df["QQ Rating"].apply(lambda x: f"{x * 100:.2f}%")
         st.dataframe(df, width="stretch", hide_index=True)
 
     if data:

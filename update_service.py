@@ -326,7 +326,7 @@ class UpdateService:
                 d = start + timedelta(days=i)
                 units = data["daily"].get(d, 0)
                 daily_points += compute_qq_points(units)
-            data["score"] = daily_points / days_in_range if days_in_range > 0 else 0
+            data["score"] = daily_points / (days_in_range * 10) if days_in_range > 0 else 0
 
         leaderboard = list(agg.values())
         leaderboard.sort(key=lambda x: (-x["score"], -x["total_units"], x["handle"]))
