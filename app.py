@@ -44,6 +44,26 @@ st.markdown(
 # Load environment variables for sergeant credentials
 load_dotenv()
 
+def _kpi_month_window(target_date: date) -> Tuple[date, date]:
+    month_start = date(target_date.year, target_date.month, 1)
+    # KPI month starts on the Sunday before the 1st of the month
+    start = month_start - timedelta(days=(month_start.weekday() + 1) % 7)
+    end = start + timedelta(days=27)
+    return start, end
+
+
+def current_kpi_window(today: date) -> Tuple[date, date]:
+    start, end = _kpi_month_window(today)
+    if today > end:
+        next_month = 1 if today.month == 12 else today.month + 1
+        next_year = today.year + (1 if today.month == 12 else 0)
+        start, end = _kpi_month_window(date(next_year, next_month, 1))
+    elif today < start:
+        prev_month = 12 if today.month == 1 else today.month - 1
+        prev_year = today.year - (1 if today.month == 1 else 0)
+        start, end = _kpi_month_window(date(prev_year, prev_month, 1))
+    return start, end
+
 def get_secret(key: str, default: str = ""):
     try:
         return st.secrets.get(key, default)
@@ -81,8 +101,16 @@ if page == "✨ Submit Content":
         category = st.selectbox("Category", ["Thread/Meme", "Secret's Engagement", "Shill"])
         content_url = st.text_input("Content URL")
 
-        default_date = datetime.now().date()
-        posted_date = st.date_input("Posted date (UTC)", value=default_date)
+        today = datetime.now(timezone.utc).date()
+        kpi_start, kpi_end = current_kpi_window(today)
+        default_date = min(max(today, kpi_start), kpi_end)
+        st.caption(f"Submissions allowed only for the current KPI month: {kpi_start} to {kpi_end} (UTC).")
+        posted_date = st.date_input(
+            "Posted date (UTC)",
+            value=default_date,
+            min_value=kpi_start,
+            max_value=kpi_end,
+        )
         confirm = st.checkbox("I confirm the category and posted date are correct for this link.")
 
         if st.form_submit_button("Submit Content"):
@@ -92,6 +120,8 @@ if page == "✨ Submit Content":
                 st.error("Please select a soldier")
             elif not confirm:
                 st.error("Please confirm category and posted date are correct.")
+            elif posted_date < kpi_start or posted_date > kpi_end:
+                st.error(f"Posted date must be within the current KPI month: {kpi_start} to {kpi_end} (UTC).")
             else:
                 posted_at = datetime.combine(posted_date, dtime.min).replace(tzinfo=timezone.utc)
                 with st.spinner("Recording content..."):
