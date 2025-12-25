@@ -110,8 +110,9 @@ elif page == "🏅 Leaderboard":
     _table_css = """
     <style>
     .stMarkdown table { border-collapse: separate; border-spacing: 0; width: 100%; }
-    .stMarkdown th { text-align: left; font-weight: 700; color: #FF3912; padding: 0.5rem 0.75rem; border-bottom: 1px solid #eee; }
-    .stMarkdown td { padding: 0.5rem 0.75rem; border-bottom: 1px solid #f0f0f0; }
+    .stMarkdown th { text-align: center; font-weight: 700; color: #FF3912; padding: 0.5rem 0.75rem; border-bottom: 1px solid #eee; }
+    .stMarkdown td { text-align: center; padding: 0.5rem 0.75rem; border-bottom: 1px solid #f0f0f0; }
+    .stMarkdown th:first-child, .stMarkdown td:first-child { text-align: left; }
     .stMarkdown tr:last-child td { border-bottom: none; }
     </style>
     """
@@ -168,7 +169,19 @@ elif page == "🏅 Leaderboard":
             "se": "SE",
             "sh": "SH",
         })
-        df["QQ Rating"] = df["QQ Rating"].apply(lambda x: f"{x * 100:.2f}%")
+
+        if title == "Monthly" and not df.empty:
+            for col in ["TM", "SE", "SH", "Total", "QQ Rating"]:
+                df[col] = pd.to_numeric(df[col], errors="coerce")
+            totals = {
+                "Soldier": "Total",
+                "TM": df["TM"].sum(),
+                "SE": df["SE"].sum(),
+                "SH": df["SH"].sum(),
+                "Total": df["Total"].sum(),
+                "QQ Rating": df["QQ Rating"].mean(),
+            }
+            df = pd.concat([df, pd.DataFrame([totals])], ignore_index=True)
 
         if title == "Monthly":
             medal_map = {
@@ -193,10 +206,32 @@ elif page == "🏅 Leaderboard":
                     styles = ["background-color: #D4AF37; color: #000; font-weight: 600"] * len(row)
                 return styles
 
-            styler = df.style.apply(_style_top1, axis=1).hide(axis="index")
+            def _style_monthly(data):
+                styles = pd.DataFrame("", index=data.index, columns=data.columns)
+                total_mask = data["Soldier"] == "Total"
+
+                for col in ["Soldier", "TM", "SE", "SH", "Total", "QQ Rating"]:
+                    styles.loc[total_mask, col] = "color: #FF3912; font-weight: 700"
+
+                non_total = ~total_mask
+                tm_mask = non_total & (pd.to_numeric(data["TM"], errors="coerce") < 4)
+                sh_mask = non_total & (pd.to_numeric(data["SH"], errors="coerce") < 560)
+                styles.loc[tm_mask, "TM"] = "color: #d00000; font-weight: 600"
+                styles.loc[sh_mask, "SH"] = "color: #d00000; font-weight: 600"
+
+                return styles
+
+            styler = (
+                df.style
+                .apply(_style_top1, axis=1)
+                .apply(_style_monthly, axis=None)
+                .format({"QQ Rating": "{:.2%}"})
+                .hide(axis="index")
+            )
             st.markdown(_table_css, unsafe_allow_html=True)
             st.markdown(styler.to_html(), unsafe_allow_html=True)
         else:
+            df["QQ Rating"] = df["QQ Rating"].apply(lambda x: f"{x * 100:.2f}%")
             st.markdown(_table_css, unsafe_allow_html=True)
             st.markdown(df.to_html(index=False), unsafe_allow_html=True)
 
