@@ -28,8 +28,27 @@ st.set_page_config(
     layout="wide"
 )
 
+
+st.markdown(
+    """
+    <style>
+    @media (max-width: 768px) {
+        .block-container { padding-left: 1rem; padding-right: 1rem; }
+        [data-testid="stHorizontalBlock"] { flex-direction: column; gap: 0.75rem; }
+        [data-testid="column"] { width: 100% !important; }
+    }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 # Load environment variables for sergeant credentials
 load_dotenv()
+
+def get_secret(key: str, default: str = ""):
+    try:
+        return st.secrets.get(key, default)
+    except Exception:
+        return os.getenv(key, default)
 
 # Sidebar with logo
 try:
@@ -86,7 +105,16 @@ if page == "✨ Submit Content":
                     st.error(f"❌ {message}")
 
 elif page == "🏅 Leaderboard":
-    st.title("Leaderboard")
+    st.markdown("<h1 style=\"color:#FF3912;\">Leaderboard</h1>", unsafe_allow_html=True)
+
+    _table_css = """
+    <style>
+    .stMarkdown table { border-collapse: separate; border-spacing: 0; width: 100%; }
+    .stMarkdown th { text-align: left; font-weight: 700; color: #FF3912; padding: 0.5rem 0.75rem; border-bottom: 1px solid #eee; }
+    .stMarkdown td { padding: 0.5rem 0.75rem; border-bottom: 1px solid #f0f0f0; }
+    .stMarkdown tr:last-child td { border-bottom: none; }
+    </style>
+    """
 
     available_months = service.get_available_months()
     current_month = datetime.now()
@@ -165,10 +193,12 @@ elif page == "🏅 Leaderboard":
                     styles = ["background-color: #D4AF37; color: #000; font-weight: 600"] * len(row)
                 return styles
 
-            styler = df.style.apply(_style_top1, axis=1)
-            st.dataframe(styler, width="stretch", hide_index=True)
+            styler = df.style.apply(_style_top1, axis=1).hide(axis="index")
+            st.markdown(_table_css, unsafe_allow_html=True)
+            st.markdown(styler.to_html(), unsafe_allow_html=True)
         else:
-            st.dataframe(df, width="stretch", hide_index=True)
+            st.markdown(_table_css, unsafe_allow_html=True)
+            st.markdown(df.to_html(index=False), unsafe_allow_html=True)
 
     if data:
         week_tabs = st.tabs(["Week 1", "Week 2", "Week 3", "Week 4", "Monthly"])
@@ -193,20 +223,14 @@ elif page == "🏅 Leaderboard":
         st.info("📝 No leaderboard data yet.")
 
 elif page == "🛡️ Sergeant Console":
-    st.title("Sergeant Console")
+    st.markdown("<h1 style=\"color:#FF3912;\">Sergeant Console</h1>", unsafe_allow_html=True)
     st.caption("Login with your username and password.")
 
-    def _get_secret(key: str, default: str = ""):
-        try:
-            return st.secrets.get(key, default)
-        except Exception:
-            return os.getenv(key, default)
-
     credentials = {
-        "emlanis": _get_secret("SERGEANT_EMLANIS_PW", ""),
-        "tripplea": _get_secret("SERGEANT_TRIPPLEA_PW", ""),
-        "aliyu": _get_secret("SERGEANT_ALIYU_PW", ""),
-        "anewbiz": _get_secret("CAPTAIN_ANEWBIZ_PW", ""),
+        "emlanis": get_secret("SERGEANT_EMLANIS_PW", ""),
+        "tripplea": get_secret("SERGEANT_TRIPPLEA_PW", ""),
+        "aliyu": get_secret("SERGEANT_ALIYU_PW", ""),
+        "anewbiz": get_secret("CAPTAIN_ANEWBIZ_PW", ""),
     }
 
     sergeant_map = {
@@ -246,8 +270,9 @@ elif page == "🛡️ Sergeant Console":
             id_to_handle = {s["id"]: s["handle"] for s in soldiers}
 
             # Soldier filter
+            filter_cols = st.columns([2, 2, 2, 1])
             filter_options = ["All"] + sorted(set([id_to_handle.get(p["soldier_id"], "Unknown") for p in posts if id_to_handle.get(p["soldier_id"])]))
-            chosen = st.selectbox("Filter by soldier", filter_options)
+            chosen = filter_cols[0].selectbox("Filter by soldier", filter_options)
 
             if chosen != "All":
                 posts = [p for p in posts if id_to_handle.get(p["soldier_id"], "") == chosen]
@@ -257,14 +282,24 @@ elif page == "🛡️ Sergeant Console":
                 for p in posts
                 if isinstance(p.get("posted_at"), str)
             }, reverse=True)
-            selected_date = st.selectbox("Filter by date", date_options)
+            selected_date = filter_cols[1].selectbox("Filter by date", date_options)
             if selected_date != "All":
                 posts = [p for p in posts if isinstance(p.get("posted_at"), str) and p.get("posted_at", "").startswith(selected_date)]
 
             category_options = ["All"] + sorted({p.get("category") for p in posts if p.get("category")})
-            selected_category = st.selectbox("Filter by category", category_options)
+            selected_category = filter_cols[2].selectbox("Filter by category", category_options)
             if selected_category != "All":
                 posts = [p for p in posts if p.get("category") == selected_category]
+
+            filter_cols[3].markdown(
+                """
+                <style>
+                div[data-testid="stMetricValue"] { color: #FF3912; }
+                </style>
+                """,
+                unsafe_allow_html=True,
+            )
+            filter_cols[3].metric("Total Entries", len(posts))
 
             st.write("Use Edit to update posted date or category. Use Delete to remove a submission.")
 
@@ -289,12 +324,21 @@ elif page == "🛡️ Sergeant Console":
                     st.session_state[f"edit_open_{post_id}"] = True
 
                 if cols[3].button("Delete", key=f"del_{post_id}"):
-                    ok, msg = service.delete_post(post_id, allowed)
-                    if ok:
-                        st.success(msg)
-                        st.rerun()
-                    else:
-                        st.error(msg)
+                    st.session_state[f"confirm_del_{post_id}"] = True
+
+                if st.session_state.get(f"confirm_del_{post_id}"):
+                    st.warning("You are about to delete this submission. This cannot be undone.")
+                    confirm_cols = st.columns([1, 1, 6])
+                    if confirm_cols[0].button("Yes, delete", key=f"confirm_yes_{post_id}"):
+                        ok, msg = service.delete_post(post_id, allowed)
+                        if ok:
+                            st.success(msg)
+                            st.session_state.pop(f"confirm_del_{post_id}", None)
+                            st.rerun()
+                        else:
+                            st.error(msg)
+                    if confirm_cols[1].button("Cancel", key=f"confirm_no_{post_id}"):
+                        st.session_state.pop(f"confirm_del_{post_id}", None)
 
                 if st.session_state.get(f"edit_open_{post_id}"):
                     try:
@@ -319,7 +363,9 @@ elif page == "🛡️ Sergeant Console":
                         )
                         if is_auto:
                             st.caption("Auto-added SE entry. Category is locked to Secret's Engagement.")
-                        if st.form_submit_button("Save changes"):
+                        save = st.form_submit_button("Save changes")
+                        cancel = st.form_submit_button("Cancel")
+                        if save:
                             posted_at = datetime.combine(new_date, dtime.min).replace(tzinfo=timezone.utc)
                             ok, msg = service.update_post(post_id, allowed, new_category, posted_at)
                             if ok:
@@ -328,3 +374,6 @@ elif page == "🛡️ Sergeant Console":
                                 st.rerun()
                             else:
                                 st.error(msg)
+                        if cancel:
+                            st.session_state.pop(f"edit_open_{post_id}", None)
+                            st.rerun()
