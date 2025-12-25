@@ -194,7 +194,7 @@ elif page == "🏅 Leaderboard":
 
 elif page == "🛡️ Sergeant Console":
     st.title("Sergeant Console")
-    st.caption("Login with sergeant name (case-insensitive) and password. Captain AnewbiZ sees all.")
+    st.caption("Login with your username and password.")
 
     def _get_secret(key: str, default: str = ""):
         try:
@@ -246,22 +246,48 @@ elif page == "🛡️ Sergeant Console":
             id_to_handle = {s["id"]: s["handle"] for s in soldiers}
 
             # Soldier filter
-            handles_lower = [h.lower() for h in allowed]
             filter_options = ["All"] + sorted(set([id_to_handle.get(p["soldier_id"], "Unknown") for p in posts if id_to_handle.get(p["soldier_id"])]))
             chosen = st.selectbox("Filter by soldier", filter_options)
 
             if chosen != "All":
                 posts = [p for p in posts if id_to_handle.get(p["soldier_id"], "") == chosen]
 
-            st.write("Click Delete to remove a submission.")
+            date_options = ["All"] + sorted({
+                (p.get("posted_at") or "")[:10]
+                for p in posts
+                if isinstance(p.get("posted_at"), str)
+            }, reverse=True)
+            selected_date = st.selectbox("Filter by date", date_options)
+            if selected_date != "All":
+                posts = [p for p in posts if isinstance(p.get("posted_at"), str) and p.get("posted_at", "").startswith(selected_date)]
+
+            category_options = ["All"] + sorted({p.get("category") for p in posts if p.get("category")})
+            selected_category = st.selectbox("Filter by category", category_options)
+            if selected_category != "All":
+                posts = [p for p in posts if p.get("category") == selected_category]
+
+            st.write("Use Edit to update posted date or category. Use Delete to remove a submission.")
+
+            category_labels = {
+                "TM": "Thread/Meme",
+                "SE": "Secret's Engagement",
+                "SH": "Shill",
+            }
+
             for p in posts:
                 post_id = p.get("id")
                 soldier_name = id_to_handle.get(p.get("soldier_id"), "Unknown")
                 posted_at_val = p.get("posted_at")
                 posted_at_disp = posted_at_val[:10] if isinstance(posted_at_val, str) else posted_at_val
-                cols = st.columns([4, 5, 2, 1])
+                cols = st.columns([4, 5, 1, 1])
                 cols[0].markdown(f"**{soldier_name}** — {p.get('category')}  ")
-                cols[1].markdown(f"[Link]({p.get('url')})  \nPosted: {posted_at_disp} | Units: {p.get('units', 0)}")
+                cols[1].markdown(
+                    f"[Link]({p.get('url')})  \nPosted: {posted_at_disp} | Units: {p.get('units', 0)}"
+                )
+
+                if cols[2].button("Edit", key=f"edit_{post_id}"):
+                    st.session_state[f"edit_open_{post_id}"] = True
+
                 if cols[3].button("Delete", key=f"del_{post_id}"):
                     ok, msg = service.delete_post(post_id, allowed)
                     if ok:
@@ -269,3 +295,36 @@ elif page == "🛡️ Sergeant Console":
                         st.rerun()
                     else:
                         st.error(msg)
+
+                if st.session_state.get(f"edit_open_{post_id}"):
+                    try:
+                        posted_dt = datetime.fromisoformat(posted_at_val.replace("Z", "+00:00")) if isinstance(posted_at_val, str) else posted_at_val
+                        posted_date = posted_dt.date() if posted_dt else datetime.now(timezone.utc).date()
+                    except Exception:
+                        posted_date = datetime.now(timezone.utc).date()
+
+                    category_value = p.get("category") or "TM"
+                    category_options = ["TM", "SE", "SH"]
+                    is_auto = isinstance(p.get("url"), str) and p.get("url", "").endswith("#auto-se")
+
+                    with st.form(f"edit_form_{post_id}"):
+                        new_date = st.date_input("Posted date (UTC)", value=posted_date, key=f"edit_date_{post_id}")
+                        new_category = st.selectbox(
+                            "Category",
+                            category_options,
+                            index=category_options.index(category_value) if category_value in category_options else 0,
+                            format_func=lambda x: category_labels.get(x, x),
+                            disabled=is_auto,
+                            key=f"edit_cat_{post_id}",
+                        )
+                        if is_auto:
+                            st.caption("Auto-added SE entry. Category is locked to Secret's Engagement.")
+                        if st.form_submit_button("Save changes"):
+                            posted_at = datetime.combine(new_date, dtime.min).replace(tzinfo=timezone.utc)
+                            ok, msg = service.update_post(post_id, allowed, new_category, posted_at)
+                            if ok:
+                                st.success(msg)
+                                st.session_state.pop(f"edit_open_{post_id}", None)
+                                st.rerun()
+                            else:
+                                st.error(msg)

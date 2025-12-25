@@ -411,3 +411,65 @@ class UpdateService:
             return True, "Deleted"
         except Exception as e:
             return False, f"Error: {e}"
+
+    def update_post(self, post_id: str, allowed_handles: List[str], category: str, posted_at: datetime) -> Tuple[bool, str]:
+        try:
+            soldiers = self.get_soldiers()
+            handle_to_id = {s["handle"].lower(): s["id"] for s in soldiers}
+            allowed_ids = {handle_to_id[h.lower()] for h in allowed_handles if h.lower() in handle_to_id}
+            if not allowed_ids:
+                return False, "Not authorized"
+
+            post = self.supabase.table("posts").select("id,soldier_id,url,category").eq("id", post_id).execute()
+            if not post.data:
+                return False, "Post not found"
+            record = post.data[0]
+            if record["soldier_id"] not in allowed_ids:
+                return False, "Not authorized"
+
+            if isinstance(posted_at, date) and not isinstance(posted_at, datetime):
+                posted_dt = datetime.combine(posted_at, time.min).replace(tzinfo=timezone.utc)
+            else:
+                posted_dt = posted_at
+                if posted_dt.tzinfo is None:
+                    posted_dt = posted_dt.replace(tzinfo=timezone.utc)
+
+            url = record.get("url") or ""
+            is_auto = url.endswith("#auto-se")
+            new_category = "SE" if is_auto else category
+
+            self.supabase.table("posts").update({
+                "category": new_category,
+                "posted_at": posted_dt.isoformat(),
+            }).eq("id", post_id).execute()
+
+            if not is_auto:
+                base_url = url.replace("#auto-se", "")
+                auto_url = f"{base_url}#auto-se"
+                if new_category == "TM":
+                    auto = self.supabase.table("posts").select("id").eq("soldier_id", record["soldier_id"]).eq("url", auto_url).execute()
+                    if auto.data:
+                        self.supabase.table("posts").update({
+                            "category": "SE",
+                            "posted_at": posted_dt.isoformat(),
+                            "units": 6,
+                        }).eq("id", auto.data[0]["id"]).execute()
+                    else:
+                        self.supabase.table("posts").insert({
+                            "soldier_id": record["soldier_id"],
+                            "category": "SE",
+                            "url": auto_url,
+                            "units": 6,
+                            "posted_at": posted_dt.isoformat(),
+                            "submitted_at": datetime.now(timezone.utc).isoformat(),
+                            "likes": 0,
+                            "reposts": 0,
+                            "views": 0,
+                            "raw_meta": {},
+                        }).execute()
+                else:
+                    self.supabase.table("posts").delete().eq("soldier_id", record["soldier_id"]).eq("url", auto_url).execute()
+
+            return True, "Updated"
+        except Exception as e:
+            return False, f"Error: {e}"
