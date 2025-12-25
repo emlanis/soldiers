@@ -141,7 +141,34 @@ elif page == "🏅 Leaderboard":
             "sh": "SH",
         })
         df["QQ Rating"] = df["QQ Rating"].apply(lambda x: f"{x * 100:.2f}%")
-        st.dataframe(df, width="stretch", hide_index=True)
+
+        if title == "Monthly":
+            medal_map = {
+                0: "🥇 ",
+                1: "🥈 ",
+                2: "🥉 ",
+                3: "4️⃣ ",
+                4: "5️⃣ ",
+                5: "6️⃣ ",
+                6: "7️⃣ ",
+                7: "8️⃣ ",
+                8: "9️⃣ ",
+                9: "🔟 ",
+                10: "1️⃣1️⃣ ",
+            }
+            for i in range(min(11, len(df))):
+                df.at[i, "Soldier"] = f"{medal_map[i]}{df.at[i, 'Soldier']}"
+
+            def _style_top1(row):
+                styles = [""] * len(row)
+                if row.name == 0:
+                    styles = ["background-color: #D4AF37; color: #000; font-weight: 600"] * len(row)
+                return styles
+
+            styler = df.style.apply(_style_top1, axis=1)
+            st.dataframe(styler, width="stretch", hide_index=True)
+        else:
+            st.dataframe(df, width="stretch", hide_index=True)
 
     if data:
         week_tabs = st.tabs(["Week 1", "Week 2", "Week 3", "Week 4", "Monthly"])
@@ -185,7 +212,7 @@ elif page == "🛡️ Sergeant Console":
     sergeant_map = {
         "emlanis": ["Chiemerie", "Raheem", "Olarx", "Jigga"],
         "tripplea": ["BigBoss", "Ozed", "JohnnyLee", "QeengD"],
-        "aliyu": ["ChisomBrown", "Shamex", "PGM", "Murad"],
+        "aliyu": ["ChisomBrown", "Shamex", "Murad"],
         "anewbiz": [s["handle"] for s in service.get_soldiers()],
     }
 

@@ -72,7 +72,7 @@ class UpdateService:
     # -------------------------------------------------------------
     def refresh_soldiers(self):
         resp = self.supabase.table("soldiers").select("id, handle, profile_url").execute()
-        self._soldier_cache = {row["handle"]: row for row in resp.data} if resp.data else {}
+        self._soldier_cache = {row["handle"]: row for row in resp.data if row.get("handle", "").lower() != "pgm"} if resp.data else {}
 
     def get_soldiers(self) -> List[Dict]:
         if not self._soldier_cache:
@@ -295,6 +295,8 @@ class UpdateService:
         for post in posts:
             sid = post["soldier_id"]
             handle = id_to_handle.get(sid, "Unknown")
+            if handle.lower() == "pgm" or handle == "Unknown":
+                continue
             if handle not in agg:
                 agg[handle] = {
                     "handle": handle,
