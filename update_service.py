@@ -401,11 +401,21 @@ class UpdateService:
                 return False, "Not authorized"
             # Verify post belongs to allowed soldiers
             post = self.supabase.table("posts").select("id,soldier_id").eq("id", post_id).execute()
+            if getattr(post, "error", None):
+                return False, f"Error: {post.error}"
             if not post.data:
                 return False, "Post not found"
             if post.data[0]["soldier_id"] not in allowed_ids:
                 return False, "Not authorized"
-            self.supabase.table("posts").delete().eq("id", post_id).execute()
+            resp = self.supabase.table("posts").delete().eq("id", post_id).execute()
+            if getattr(resp, "error", None):
+                return False, f"Error: {resp.error}"
+            # Confirm deletion
+            check = self.supabase.table("posts").select("id").eq("id", post_id).execute()
+            if getattr(check, "error", None):
+                return False, f"Error: {check.error}"
+            if check.data:
+                return False, "Delete failed (row still exists)"
             return True, "Deleted"
         except Exception as e:
             return False, f"Error: {e}"
@@ -418,7 +428,9 @@ class UpdateService:
             if not allowed_ids:
                 return False, "Not authorized"
 
-            post = self.supabase.table("posts").select("id,soldier_id,url,category").eq("id", post_id).execute()
+            post = self.supabase.table("posts").select("id,soldier_id,url,category,posted_at").eq("id", post_id).execute()
+            if getattr(post, "error", None):
+                return False, f"Error: {post.error}"
             if not post.data:
                 return False, "Post not found"
             record = post.data[0]
@@ -436,24 +448,30 @@ class UpdateService:
             is_auto = url.endswith("#auto-se")
             new_category = "SE" if is_auto else category
 
-            self.supabase.table("posts").update({
+            resp = self.supabase.table("posts").update({
                 "category": new_category,
                 "posted_at": posted_dt.isoformat(),
             }).eq("id", post_id).execute()
+            if getattr(resp, "error", None):
+                return False, f"Error: {resp.error}"
 
             if not is_auto:
                 base_url = url.replace("#auto-se", "")
                 auto_url = f"{base_url}#auto-se"
                 if new_category == "TM":
                     auto = self.supabase.table("posts").select("id").eq("soldier_id", record["soldier_id"]).eq("url", auto_url).execute()
+                    if getattr(auto, "error", None):
+                        return False, f"Error: {auto.error}"
                     if auto.data:
-                        self.supabase.table("posts").update({
+                        upd = self.supabase.table("posts").update({
                             "category": "SE",
                             "posted_at": posted_dt.isoformat(),
                             "units": 6,
                         }).eq("id", auto.data[0]["id"]).execute()
+                        if getattr(upd, "error", None):
+                            return False, f"Error: {upd.error}"
                     else:
-                        self.supabase.table("posts").insert({
+                        ins = self.supabase.table("posts").insert({
                             "soldier_id": record["soldier_id"],
                             "category": "SE",
                             "url": auto_url,
@@ -465,9 +483,22 @@ class UpdateService:
                             "views": 0,
                             "raw_meta": {},
                         }).execute()
+                        if getattr(ins, "error", None):
+                            return False, f"Error: {ins.error}"
                 else:
-                    self.supabase.table("posts").delete().eq("soldier_id", record["soldier_id"]).eq("url", auto_url).execute()
+                    delete_auto = self.supabase.table("posts").delete().eq("soldier_id", record["soldier_id"]).eq("url", auto_url).execute()
+                    if getattr(delete_auto, "error", None):
+                        return False, f"Error: {delete_auto.error}"
 
+            # Confirm update applied
+            check = self.supabase.table("posts").select("category,posted_at").eq("id", post_id).execute()
+            if getattr(check, "error", None):
+                return False, f"Error: {check.error}"
+            if not check.data:
+                return False, "Update failed (row missing)"
+            current = check.data[0]
+            if current.get("category") != new_category:
+                return False, "Update failed (category unchanged)"
             return True, "Updated"
         except Exception as e:
             return False, f"Error: {e}"
