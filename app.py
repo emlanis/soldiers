@@ -204,6 +204,17 @@ def require_auth():
                 else:
                     try:
                         auth_client.auth.update_user({"password": new_pw})
+                        user = auth_client.auth.get_user().user
+                        email = user.email if user else None
+                        if not email:
+                            raise RuntimeError("Could not resolve user email after reset")
+                        res = auth_client.auth.sign_in_with_password({"email": email, "password": new_pw})
+                        if not res.session:
+                            raise RuntimeError("Password update did not stick. Please try reset again.")
+                        st.session_state.auth_session = {
+                            "access_token": res.session.access_token,
+                            "refresh_token": res.session.refresh_token,
+                        }
                         st.session_state.pending_password = False
                         st.session_state.pending_password_type = None
                         st.success("Password updated. You are now logged in.")
@@ -260,6 +271,17 @@ def require_auth():
                     else:
                         try:
                             auth_client.auth.update_user({"password": new_pw})
+                            user = auth_client.auth.get_user().user
+                            email = user.email if user else None
+                            if not email:
+                                raise RuntimeError("Could not resolve user email after invite")
+                            res = auth_client.auth.sign_in_with_password({"email": email, "password": new_pw})
+                            if not res.session:
+                                raise RuntimeError("Password update did not stick. Please try invite again.")
+                            st.session_state.auth_session = {
+                                "access_token": res.session.access_token,
+                                "refresh_token": res.session.refresh_token,
+                            }
                             st.session_state.pending_password = False
                             st.session_state.pending_password_type = None
                             st.success("Password set. You are now logged in.")
