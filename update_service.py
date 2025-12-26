@@ -517,3 +517,8 @@ class UpdateService:
 
     def set_auth_session(self, access_token: str, refresh_token: str) -> None:
         self.supabase.auth.set_session(access_token, refresh_token)
+        # Ensure PostgREST requests use the authenticated JWT.
+        try:
+            self.supabase.postgrest.auth(access_token)
+        except Exception:
+            pass
