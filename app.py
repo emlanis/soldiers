@@ -193,6 +193,8 @@ def require_auth():
             st.error(f"Invite verification failed: {e}")
 
     st.markdown('<h1 style="color:#FF3912;">Login</h1>', unsafe_allow_html=True)
+    build_tag = os.getenv("APP_BUILD", "dev")
+    st.caption(f"Build: {build_tag}")
     if st.session_state.get("pending_password") and st.session_state.get("pending_password_type") == "recovery":
         st.markdown('<h1 style="color:#FF3912;">Reset Password</h1>', unsafe_allow_html=True)
         with st.form("recovery_set_password"):
