@@ -497,8 +497,20 @@ class UpdateService:
             if not check.data:
                 return False, "Update failed (row missing)"
             current = check.data[0]
-            if current.get("category") != new_category:
+            current_category = current.get("category")
+            if current_category != new_category:
                 return False, "Update failed (category unchanged)"
+            current_posted = current.get("posted_at")
+            try:
+                if isinstance(current_posted, str):
+                    current_dt = datetime.fromisoformat(current_posted.replace("Z", "+00:00"))
+                else:
+                    current_dt = current_posted
+                if current_dt and current_dt.date() != posted_dt.date():
+                    return False, "Update failed (date unchanged)"
+            except Exception:
+                # If parsing fails, don't block success
+                pass
             return True, "Updated"
         except Exception as e:
             return False, f"Error: {e}"
