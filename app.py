@@ -104,6 +104,7 @@ def require_auth():
     if user:
         role = (user.app_metadata or {}).get("role")
         st.session_state.user_role = role
+        st.session_state.user_email = user.email
         st.sidebar.write(f"Logged in: {user.email}")
         if st.sidebar.button("Logout"):
             try:
@@ -158,6 +159,7 @@ def require_auth():
             "refresh_token": refresh_token,
         }
         st.session_state.pending_password = True
+        st.session_state.pending_password_type = invite_type or "invite"
         try:
             st.query_params.clear()
         except Exception:
@@ -172,6 +174,7 @@ def require_auth():
                     "refresh_token": res.session.refresh_token,
                 }
                 st.session_state.pending_password = True
+                st.session_state.pending_password_type = invite_type
                 try:
                     st.query_params.clear()
                 except Exception:
@@ -180,13 +183,38 @@ def require_auth():
             st.error(f"Invite verification failed: {e}")
 
     st.markdown("<h1 style=\"color:#FF3912;\">Login</h1>", unsafe_allow_html=True)
+    if st.session_state.get("pending_password") and st.session_state.get("pending_password_type") == "recovery":
+        st.markdown("<h1 style=\"color:#FF3912;\">Reset Password</h1>", unsafe_allow_html=True)
+        with st.form("recovery_set_password"):
+            new_pw = st.text_input("New password", type="password", key="recovery_pw")
+            new_pw_confirm = st.text_input("Confirm password", type="password", key="recovery_pw_confirm")
+            if st.form_submit_button("Set new password"):
+                if not new_pw or new_pw != new_pw_confirm:
+                    st.error("Passwords do not match")
+                else:
+                    try:
+                        auth_client.auth.update_user({"password": new_pw})
+                        st.session_state.pending_password = False
+                        st.session_state.pending_password_type = None
+                        st.success("Password updated. You are now logged in.")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Password update failed: {e}")
+        st.stop()
+
     tabs = st.tabs(["Sign in", "Accept invite"])
 
     with tabs[0]:
         with st.form("login_form"):
             email = st.text_input("Email")
             password = st.text_input("Password", type="password")
-            if st.form_submit_button("Sign in"):
+            btn_row = st.columns([1, 2, 2, 1])
+            with btn_row[1]:
+                sign_in = st.form_submit_button("Sign in")
+            with btn_row[2]:
+                reset = st.form_submit_button("Reset password")
+
+            if sign_in:
                 try:
                     res = auth_client.auth.sign_in_with_password({"email": email, "password": password})
                     if res.session:
@@ -200,9 +228,19 @@ def require_auth():
                 except Exception as e:
                     st.error(f"Login failed: {e}")
 
+            if reset:
+                if not email:
+                    st.error("Enter your email to reset your password")
+                else:
+                    try:
+                        auth_client.auth.reset_password_for_email(email)
+                        st.success("Reset link sent. Check your email.")
+                    except Exception as e:
+                        st.error(f"Reset failed: {e}")
+
     with tabs[1]:
         st.write("Open your invite email link in the browser. After redirect, set your password here.")
-        if st.session_state.get("pending_password"):
+        if st.session_state.get("pending_password") and st.session_state.get("pending_password_type") == "invite":
             with st.form("invite_set_password"):
                 new_pw = st.text_input("New password", type="password")
                 new_pw_confirm = st.text_input("Confirm password", type="password")
@@ -213,6 +251,7 @@ def require_auth():
                         try:
                             auth_client.auth.update_user({"password": new_pw})
                             st.session_state.pending_password = False
+                            st.session_state.pending_password_type = None
                             st.success("Password set. You are now logged in.")
                             st.rerun()
                         except Exception as e:
@@ -443,44 +482,28 @@ elif page == "🏅 Leaderboard":
 
 elif page == "🛡️ Sergeant Console":
     st.markdown("<h1 style=\"color:#FF3912;\">Sergeant Console</h1>", unsafe_allow_html=True)
-    st.caption("Login with your username and password.")
-
-    credentials = {
-        "emlanis": get_secret("SERGEANT_EMLANIS_PW", ""),
-        "tripplea": get_secret("SERGEANT_TRIPPLEA_PW", ""),
-        "aliyu": get_secret("SERGEANT_ALIYU_PW", ""),
-        "anewbiz": get_secret("CAPTAIN_ANEWBIZ_PW", ""),
-    }
-
     sergeant_map = {
-        "emlanis": ["Chiemerie", "Raheem", "Olarx", "Jigga"],
-        "tripplea": ["BigBoss", "Ozed", "JohnnyLee", "QeengD"],
-        "aliyu": ["ChisomBrown", "Shamex", "Murad"],
-        "anewbiz": [s["handle"] for s in service.get_soldiers()],
+        "emlanisk@gmail.com": ["Chiemerie", "Raheem", "Olarx", "Jigga"],
+        "adeniyiabdulwahab372@gmail.com": ["BigBoss", "Ozed", "JohnnyLee", "QeengD"],
+        "thisismohammedaliyu@gmail.com": ["ChisomBrown", "Shamex", "Murad"],
     }
 
-    if "sergeant_user" not in st.session_state:
-        st.session_state.sergeant_user = None
+    role = st.session_state.get("user_role")
+    user_email = (st.session_state.get("user_email") or "").lower()
 
-    if st.session_state.sergeant_user is None:
-        with st.form("sergeant_login"):
-            user = st.text_input("Username").strip().lower()
-            pw = st.text_input("Password", type="password")
-            if st.form_submit_button("Login"):
-                if user in credentials and credentials[user] and pw == credentials[user]:
-                    st.session_state.sergeant_user = user
-                    st.success("Logged in")
-                    st.rerun()
-                else:
-                    st.error("Invalid credentials")
+    if role not in {"sergeant", "captain"}:
+        st.error("Not authorized")
+        st.stop()
+
+    if role == "captain":
+        allowed = [s["handle"] for s in service.get_soldiers()]
+        st.write("Logged in as **Captain**")
     else:
-        user = st.session_state.sergeant_user
-        st.write(f"Logged in as **{user}**")
-        if st.button("Logout"):
-            st.session_state.sergeant_user = None
-            st.rerun()
-
-        allowed = sergeant_map.get(user, [])
+        allowed = sergeant_map.get(user_email, [])
+        st.write(f"Logged in as **{user_email}**")
+        if not allowed:
+            st.error("No soldier access configured for this account")
+            st.stop()
         posts = service.get_posts_for_soldiers(allowed)
         if not posts:
             st.info("No submissions for your soldiers yet.")
