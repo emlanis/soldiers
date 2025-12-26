@@ -169,7 +169,7 @@ def require_auth():
             "refresh_token": refresh_token,
         }
         st.session_state.pending_password = True
-        st.session_state.pending_password_type = invite_type or "invite"
+        st.session_state.pending_password_type = invite_type or "recovery"
         try:
             st.query_params.clear()
         except Exception:
