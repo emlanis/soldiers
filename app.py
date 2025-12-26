@@ -200,8 +200,6 @@ def require_auth():
             st.error(f"Invite verification failed: {e}")
 
     st.markdown('<h1 style="color:#FF3912;">Login</h1>', unsafe_allow_html=True)
-    build_tag = os.getenv("APP_BUILD", "dev")
-    st.caption(f"Build: {build_tag}")
     if st.session_state.get("pending_password") and not st.session_state.get("auth_session"):
         st.session_state.pending_password = False
         st.session_state.pending_password_type = None
