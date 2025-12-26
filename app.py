@@ -4,15 +4,12 @@ Secret Soldiers KPI Dashboard - Submit X links with posted date fidelity and vie
 
 import os
 import streamlit as st
-import streamlit.components.v1 as components
 import pandas as pd
 from datetime import datetime, timedelta, timezone, date, time as dtime
 from dotenv import load_dotenv
 from typing import List, Tuple
 import time
 from update_service import UpdateService
-from supabase import create_client
-from urllib.parse import urlsplit, parse_qs
 
 @st.cache_resource
 def get_update_service():
@@ -47,219 +44,11 @@ st.markdown(
 # Load environment variables for sergeant credentials
 load_dotenv()
 
-def _kpi_month_window(target_date: date) -> Tuple[date, date]:
-    month_start = date(target_date.year, target_date.month, 1)
-    # KPI month starts on the Sunday before the 1st of the month
-    start = month_start - timedelta(days=(month_start.weekday() + 1) % 7)
-    end = start + timedelta(days=27)
-    return start, end
-
-
-def current_kpi_window(today: date) -> Tuple[date, date]:
-    start, end = _kpi_month_window(today)
-    if today > end:
-        next_month = 1 if today.month == 12 else today.month + 1
-        next_year = today.year + (1 if today.month == 12 else 0)
-        start, end = _kpi_month_window(date(next_year, next_month, 1))
-    elif today < start:
-        prev_month = 12 if today.month == 1 else today.month - 1
-        prev_year = today.year - (1 if today.month == 1 else 0)
-        start, end = _kpi_month_window(date(prev_year, prev_month, 1))
-    return start, end
-
 def get_secret(key: str, default: str = ""):
     try:
         return st.secrets.get(key, default)
     except Exception:
         return os.getenv(key, default)
-
-def get_auth_client():
-    if "auth_client" not in st.session_state:
-        url = get_secret("SUPABASE_URL")
-        key = get_secret("SUPABASE_ANON_KEY")
-        if not url or not key:
-            st.error("SUPABASE_URL and SUPABASE_ANON_KEY must be set")
-            st.stop()
-        st.session_state.auth_client = create_client(url, key)
-    return st.session_state.auth_client
-
-
-def load_session():
-    session = st.session_state.get("auth_session")
-    if not session:
-        return None
-    auth_client = get_auth_client()
-    try:
-        auth_client.auth.set_session(session["access_token"], session["refresh_token"])
-        service.set_auth_session(session["access_token"], session["refresh_token"])
-        user = auth_client.auth.get_user().user
-        return user
-    except Exception:
-        return None
-
-
-def require_auth():
-    auth_client = get_auth_client()
-    user = load_session()
-    if user:
-        role = (user.app_metadata or {}).get("role")
-        st.session_state.user_role = role
-        st.session_state.user_email = user.email
-        st.sidebar.write(f"Logged in: {user.email}")
-        if st.sidebar.button("Logout"):
-            try:
-                auth_client.auth.sign_out()
-            finally:
-                st.session_state.pop("auth_session", None)
-                st.session_state.pop("user_role", None)
-                st.rerun()
-        if not role:
-            st.error("Your account has no role assigned. Contact an admin.")
-            st.stop()
-        return role
-
-    components.html(
-        """
-        <script>
-        (function() {
-          const parent = window.parent;
-          const hash = parent.location.hash;
-          if (hash && hash.includes("access_token=") && !parent.location.search.includes("access_token=")) {
-            const params = new URLSearchParams(hash.slice(1));
-            const url = new URL(parent.location.href);
-            url.hash = "";
-            params.forEach((v, k) => url.searchParams.set(k, v));
-            parent.location.replace(url.toString());
-          }
-        })();
-        </script>
-        """,
-        height=0,
-    )
-
-    params = st.query_params
-    access_token = params.get("access_token")
-    refresh_token = params.get("refresh_token")
-    token_hash = params.get("token")
-    invite_type = params.get("type")
-
-    if isinstance(access_token, list):
-        access_token = access_token[0] if access_token else None
-    if isinstance(refresh_token, list):
-        refresh_token = refresh_token[0] if refresh_token else None
-    if isinstance(token_hash, list):
-        token_hash = token_hash[0] if token_hash else None
-    if isinstance(invite_type, list):
-        invite_type = invite_type[0] if invite_type else None
-
-    if access_token and refresh_token:
-        auth_client.auth.set_session(access_token, refresh_token)
-        st.session_state.auth_session = {
-            "access_token": access_token,
-            "refresh_token": refresh_token,
-        }
-        st.session_state.pending_password = True
-        st.session_state.pending_password_type = invite_type or "invite"
-        try:
-            st.query_params.clear()
-        except Exception:
-            st.experimental_set_query_params()
-
-    if token_hash and invite_type:
-        try:
-            res = auth_client.auth.verify_otp({"token_hash": token_hash, "type": invite_type})
-            if res.session:
-                st.session_state.auth_session = {
-                    "access_token": res.session.access_token,
-                    "refresh_token": res.session.refresh_token,
-                }
-                st.session_state.pending_password = True
-                st.session_state.pending_password_type = invite_type
-                try:
-                    st.query_params.clear()
-                except Exception:
-                    st.experimental_set_query_params()
-        except Exception as e:
-            st.error(f"Invite verification failed: {e}")
-
-    st.markdown("<h1 style=\"color:#FF3912;\">Login</h1>", unsafe_allow_html=True)
-    if st.session_state.get("pending_password") and st.session_state.get("pending_password_type") == "recovery":
-        st.markdown("<h1 style=\"color:#FF3912;\">Reset Password</h1>", unsafe_allow_html=True)
-        with st.form("recovery_set_password"):
-            new_pw = st.text_input("New password", type="password", key="recovery_pw")
-            new_pw_confirm = st.text_input("Confirm password", type="password", key="recovery_pw_confirm")
-            if st.form_submit_button("Set new password"):
-                if not new_pw or new_pw != new_pw_confirm:
-                    st.error("Passwords do not match")
-                else:
-                    try:
-                        auth_client.auth.update_user({"password": new_pw})
-                        st.session_state.pending_password = False
-                        st.session_state.pending_password_type = None
-                        st.success("Password updated. You are now logged in.")
-                        st.rerun()
-                    except Exception as e:
-                        st.error(f"Password update failed: {e}")
-        st.stop()
-
-    tabs = st.tabs(["Sign in", "Accept invite"])
-
-    with tabs[0]:
-        with st.form("login_form"):
-            email = st.text_input("Email")
-            password = st.text_input("Password", type="password")
-            btn_row = st.columns([1, 2, 2, 1])
-            with btn_row[1]:
-                sign_in = st.form_submit_button("Sign in")
-            with btn_row[2]:
-                reset = st.form_submit_button("Reset password")
-
-            if sign_in:
-                try:
-                    res = auth_client.auth.sign_in_with_password({"email": email, "password": password})
-                    if res.session:
-                        st.session_state.auth_session = {
-                            "access_token": res.session.access_token,
-                            "refresh_token": res.session.refresh_token,
-                        }
-                        st.rerun()
-                    else:
-                        st.error("Login failed")
-                except Exception as e:
-                    st.error(f"Login failed: {e}")
-
-            if reset:
-                if not email:
-                    st.error("Enter your email to reset your password")
-                else:
-                    try:
-                        auth_client.auth.reset_password_for_email(email)
-                        st.success("Reset link sent. Check your email.")
-                    except Exception as e:
-                        st.error(f"Reset failed: {e}")
-
-    with tabs[1]:
-        st.write("Open your invite email link in the browser. After redirect, set your password here.")
-        if st.session_state.get("pending_password") and st.session_state.get("pending_password_type") == "invite":
-            with st.form("invite_set_password"):
-                new_pw = st.text_input("New password", type="password")
-                new_pw_confirm = st.text_input("Confirm password", type="password")
-                if st.form_submit_button("Set password"):
-                    if not new_pw or new_pw != new_pw_confirm:
-                        st.error("Passwords do not match")
-                    else:
-                        try:
-                            auth_client.auth.update_user({"password": new_pw})
-                            st.session_state.pending_password = False
-                            st.session_state.pending_password_type = None
-                            st.success("Password set. You are now logged in.")
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Password update failed: {e}")
-        else:
-            st.info("Waiting for invite redirect. Open your invite link first.")
-
-    st.stop()
 
 # Sidebar with logo
 try:
@@ -269,13 +58,11 @@ try:
 except:
     st.sidebar.write("🚀")
 
-role = require_auth()
-
-page_options = ["✨ Submit Content", "🏅 Leaderboard"]
-if role in {"sergeant", "captain"}:
-    page_options.append("🛡️ Sergeant Console")
-
-page = st.sidebar.selectbox("Navigation", page_options)
+page = st.sidebar.selectbox("Navigation", [
+    "✨ Submit Content", 
+    "🏅 Leaderboard",
+    "🛡️ Sergeant Console"
+])
 
 if page == "✨ Submit Content":
     st.title("✍️ Submit New Content")
@@ -294,16 +81,8 @@ if page == "✨ Submit Content":
         category = st.selectbox("Category", ["Thread/Meme", "Secret's Engagement", "Shill"])
         content_url = st.text_input("Content URL")
 
-        today = datetime.now(timezone.utc).date()
-        kpi_start, kpi_end = current_kpi_window(today)
-        default_date = min(max(today, kpi_start), kpi_end)
-        st.caption(f"Submissions allowed only for the current KPI month: {kpi_start} to {kpi_end} (UTC).")
-        posted_date = st.date_input(
-            "Posted date (UTC)",
-            value=default_date,
-            min_value=kpi_start,
-            max_value=kpi_end,
-        )
+        default_date = datetime.now().date()
+        posted_date = st.date_input("Posted date (UTC)", value=default_date)
         confirm = st.checkbox("I confirm the category and posted date are correct for this link.")
 
         if st.form_submit_button("Submit Content"):
@@ -313,8 +92,6 @@ if page == "✨ Submit Content":
                 st.error("Please select a soldier")
             elif not confirm:
                 st.error("Please confirm category and posted date are correct.")
-            elif posted_date < kpi_start or posted_date > kpi_end:
-                st.error(f"Posted date must be within the current KPI month: {kpi_start} to {kpi_end} (UTC).")
             else:
                 posted_at = datetime.combine(posted_date, dtime.min).replace(tzinfo=timezone.utc)
                 with st.spinner("Recording content..."):
@@ -328,14 +105,13 @@ if page == "✨ Submit Content":
                     st.error(f"❌ {message}")
 
 elif page == "🏅 Leaderboard":
-    st.markdown("<h1 style=\"color:#FF3912;\">Leaderboard</h1>", unsafe_allow_html=True)
+    st.markdown('<h1 style="color:#FF3912;">Leaderboard</h1>', unsafe_allow_html=True)
 
     _table_css = """
     <style>
     .stMarkdown table { border-collapse: separate; border-spacing: 0; width: 100%; }
-    .stMarkdown th { text-align: center; font-weight: 700; color: #FF3912; padding: 0.5rem 0.75rem; border-bottom: 1px solid #eee; }
-    .stMarkdown td { text-align: center; padding: 0.5rem 0.75rem; border-bottom: 1px solid #f0f0f0; }
-    .stMarkdown th:first-child, .stMarkdown td:first-child { text-align: left; }
+    .stMarkdown th { text-align: left; font-weight: 700; color: #FF3912; padding: 0.5rem 0.75rem; border-bottom: 1px solid #eee; }
+    .stMarkdown td { padding: 0.5rem 0.75rem; border-bottom: 1px solid #f0f0f0; }
     .stMarkdown tr:last-child td { border-bottom: none; }
     </style>
     """
@@ -392,19 +168,7 @@ elif page == "🏅 Leaderboard":
             "se": "SE",
             "sh": "SH",
         })
-
-        if title == "Monthly" and not df.empty:
-            for col in ["TM", "SE", "SH", "Total", "QQ Rating"]:
-                df[col] = pd.to_numeric(df[col], errors="coerce")
-            totals = {
-                "Soldier": "Total",
-                "TM": df["TM"].sum(),
-                "SE": df["SE"].sum(),
-                "SH": df["SH"].sum(),
-                "Total": df["Total"].sum(),
-                "QQ Rating": df["QQ Rating"].mean(),
-            }
-            df = pd.concat([df, pd.DataFrame([totals])], ignore_index=True)
+        df["QQ Rating"] = df["QQ Rating"].apply(lambda x: f"{x * 100:.2f}%")
 
         if title == "Monthly":
             medal_map = {
@@ -429,32 +193,10 @@ elif page == "🏅 Leaderboard":
                     styles = ["background-color: #D4AF37; color: #000; font-weight: 600"] * len(row)
                 return styles
 
-            def _style_monthly(data):
-                styles = pd.DataFrame("", index=data.index, columns=data.columns)
-                total_mask = data["Soldier"] == "Total"
-
-                for col in ["Soldier", "TM", "SE", "SH", "Total", "QQ Rating"]:
-                    styles.loc[total_mask, col] = "color: #FF3912; font-weight: 700"
-
-                non_total = ~total_mask
-                tm_mask = non_total & (pd.to_numeric(data["TM"], errors="coerce") < 4)
-                sh_mask = non_total & (pd.to_numeric(data["SH"], errors="coerce") < 560)
-                styles.loc[tm_mask, "TM"] = "color: #d00000; font-weight: 600"
-                styles.loc[sh_mask, "SH"] = "color: #d00000; font-weight: 600"
-
-                return styles
-
-            styler = (
-                df.style
-                .apply(_style_top1, axis=1)
-                .apply(_style_monthly, axis=None)
-                .format({"QQ Rating": "{:.2%}"})
-                .hide(axis="index")
-            )
+            styler = df.style.apply(_style_top1, axis=1).hide(axis="index")
             st.markdown(_table_css, unsafe_allow_html=True)
             st.markdown(styler.to_html(), unsafe_allow_html=True)
         else:
-            df["QQ Rating"] = df["QQ Rating"].apply(lambda x: f"{x * 100:.2f}%")
             st.markdown(_table_css, unsafe_allow_html=True)
             st.markdown(df.to_html(index=False), unsafe_allow_html=True)
 
@@ -481,29 +223,45 @@ elif page == "🏅 Leaderboard":
         st.info("📝 No leaderboard data yet.")
 
 elif page == "🛡️ Sergeant Console":
-    st.markdown("<h1 style=\"color:#FF3912;\">Sergeant Console</h1>", unsafe_allow_html=True)
-    sergeant_map = {
-        "emlanisk@gmail.com": ["Chiemerie", "Raheem", "Olarx", "Jigga"],
-        "adeniyiabdulwahab372@gmail.com": ["BigBoss", "Ozed", "JohnnyLee", "QeengD"],
-        "thisismohammedaliyu@gmail.com": ["ChisomBrown", "Shamex", "Murad"],
+    st.markdown('<h1 style="color:#FF3912;">Sergeant Console</h1>', unsafe_allow_html=True)
+    st.caption("Login with your username and password.")
+
+    credentials = {
+        "emlanis": get_secret("SERGEANT_EMLANIS_PW", ""),
+        "tripplea": get_secret("SERGEANT_TRIPPLEA_PW", ""),
+        "aliyu": get_secret("SERGEANT_ALIYU_PW", ""),
+        "anewbiz": get_secret("CAPTAIN_ANEWBIZ_PW", ""),
     }
 
-    role = st.session_state.get("user_role")
-    user_email = (st.session_state.get("user_email") or "").lower()
+    sergeant_map = {
+        "emlanis": ["Chiemerie", "Raheem", "Olarx", "Jigga"],
+        "tripplea": ["BigBoss", "Ozed", "JohnnyLee", "QeengD"],
+        "aliyu": ["ChisomBrown", "Shamex", "Murad"],
+        "anewbiz": [s["handle"] for s in service.get_soldiers()],
+    }
 
-    if role not in {"sergeant", "captain"}:
-        st.error("Not authorized")
-        st.stop()
+    if "sergeant_user" not in st.session_state:
+        st.session_state.sergeant_user = None
 
-    if role == "captain":
-        allowed = [s["handle"] for s in service.get_soldiers()]
-        st.write("Logged in as **Captain**")
+    if st.session_state.sergeant_user is None:
+        with st.form("sergeant_login"):
+            user = st.text_input("Username").strip().lower()
+            pw = st.text_input("Password", type="password")
+            if st.form_submit_button("Login"):
+                if user in credentials and credentials[user] and pw == credentials[user]:
+                    st.session_state.sergeant_user = user
+                    st.success("Logged in")
+                    st.rerun()
+                else:
+                    st.error("Invalid credentials")
     else:
-        allowed = sergeant_map.get(user_email, [])
-        st.write(f"Logged in as **{user_email}**")
-        if not allowed:
-            st.error("No soldier access configured for this account")
-            st.stop()
+        user = st.session_state.sergeant_user
+        st.write(f"Logged in as **{user}**")
+        if st.button("Logout"):
+            st.session_state.sergeant_user = None
+            st.rerun()
+
+        allowed = sergeant_map.get(user, [])
         posts = service.get_posts_for_soldiers(allowed)
         if not posts:
             st.info("No submissions for your soldiers yet.")
