@@ -4,12 +4,15 @@ Secret Soldiers KPI Dashboard - Submit X links with posted date fidelity and vie
 
 import os
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 from datetime import datetime, timedelta, timezone, date, time as dtime
 from dotenv import load_dotenv
 from typing import List, Tuple
 import time
 from update_service import UpdateService
+from supabase import create_client
+from urllib.parse import urlsplit, parse_qs
 
 @st.cache_resource
 def get_update_service():
@@ -70,6 +73,155 @@ def get_secret(key: str, default: str = ""):
     except Exception:
         return os.getenv(key, default)
 
+def get_auth_client():
+    if "auth_client" not in st.session_state:
+        url = get_secret("SUPABASE_URL")
+        key = get_secret("SUPABASE_ANON_KEY")
+        if not url or not key:
+            st.error("SUPABASE_URL and SUPABASE_ANON_KEY must be set")
+            st.stop()
+        st.session_state.auth_client = create_client(url, key)
+    return st.session_state.auth_client
+
+
+def load_session():
+    session = st.session_state.get("auth_session")
+    if not session:
+        return None
+    auth_client = get_auth_client()
+    try:
+        auth_client.auth.set_session(session["access_token"], session["refresh_token"])
+        service.set_auth_session(session["access_token"], session["refresh_token"])
+        user = auth_client.auth.get_user().user
+        return user
+    except Exception:
+        return None
+
+
+def require_auth():
+    auth_client = get_auth_client()
+    user = load_session()
+    if user:
+        role = (user.app_metadata or {}).get("role")
+        st.session_state.user_role = role
+        st.sidebar.write(f"Logged in: {user.email}")
+        if st.sidebar.button("Logout"):
+            try:
+                auth_client.auth.sign_out()
+            finally:
+                st.session_state.pop("auth_session", None)
+                st.session_state.pop("user_role", None)
+                st.rerun()
+        if not role:
+            st.error("Your account has no role assigned. Contact an admin.")
+            st.stop()
+        return role
+
+    components.html(
+        """
+        <script>
+        (function() {
+          const parent = window.parent;
+          const hash = parent.location.hash;
+          if (hash && hash.includes("access_token=") && !parent.location.search.includes("access_token=")) {
+            const params = new URLSearchParams(hash.slice(1));
+            const url = new URL(parent.location.href);
+            url.hash = "";
+            params.forEach((v, k) => url.searchParams.set(k, v));
+            parent.location.replace(url.toString());
+          }
+        })();
+        </script>
+        """,
+        height=0,
+    )
+
+    params = st.query_params
+    access_token = params.get("access_token")
+    refresh_token = params.get("refresh_token")
+    token_hash = params.get("token")
+    invite_type = params.get("type")
+
+    if isinstance(access_token, list):
+        access_token = access_token[0] if access_token else None
+    if isinstance(refresh_token, list):
+        refresh_token = refresh_token[0] if refresh_token else None
+    if isinstance(token_hash, list):
+        token_hash = token_hash[0] if token_hash else None
+    if isinstance(invite_type, list):
+        invite_type = invite_type[0] if invite_type else None
+
+    if access_token and refresh_token:
+        auth_client.auth.set_session(access_token, refresh_token)
+        st.session_state.auth_session = {
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+        }
+        st.session_state.pending_password = True
+        try:
+            st.query_params.clear()
+        except Exception:
+            st.experimental_set_query_params()
+
+    if token_hash and invite_type:
+        try:
+            res = auth_client.auth.verify_otp({"token_hash": token_hash, "type": invite_type})
+            if res.session:
+                st.session_state.auth_session = {
+                    "access_token": res.session.access_token,
+                    "refresh_token": res.session.refresh_token,
+                }
+                st.session_state.pending_password = True
+                try:
+                    st.query_params.clear()
+                except Exception:
+                    st.experimental_set_query_params()
+        except Exception as e:
+            st.error(f"Invite verification failed: {e}")
+
+    st.markdown("<h1 style=\"color:#FF3912;\">Login</h1>", unsafe_allow_html=True)
+    tabs = st.tabs(["Sign in", "Accept invite"])
+
+    with tabs[0]:
+        with st.form("login_form"):
+            email = st.text_input("Email")
+            password = st.text_input("Password", type="password")
+            if st.form_submit_button("Sign in"):
+                try:
+                    res = auth_client.auth.sign_in_with_password({"email": email, "password": password})
+                    if res.session:
+                        st.session_state.auth_session = {
+                            "access_token": res.session.access_token,
+                            "refresh_token": res.session.refresh_token,
+                        }
+                        st.rerun()
+                    else:
+                        st.error("Login failed")
+                except Exception as e:
+                    st.error(f"Login failed: {e}")
+
+    with tabs[1]:
+        st.write("Open your invite email link in the browser. After redirect, set your password here.")
+        if st.session_state.get("pending_password"):
+            with st.form("invite_set_password"):
+                new_pw = st.text_input("New password", type="password")
+                new_pw_confirm = st.text_input("Confirm password", type="password")
+                if st.form_submit_button("Set password"):
+                    if not new_pw or new_pw != new_pw_confirm:
+                        st.error("Passwords do not match")
+                    else:
+                        try:
+                            auth_client.auth.update_user({"password": new_pw})
+                            st.session_state.pending_password = False
+                            st.success("Password set. You are now logged in.")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Password update failed: {e}")
+        else:
+            st.info("Waiting for invite redirect. Open your invite link first.")
+
+    st.stop()
+
 # Sidebar with logo
 try:
     col1, col2, col3 = st.sidebar.columns([1, 2, 1])
@@ -78,11 +230,13 @@ try:
 except:
     st.sidebar.write("🚀")
 
-page = st.sidebar.selectbox("Navigation", [
-    "✨ Submit Content", 
-    "🏅 Leaderboard",
-    "🛡️ Sergeant Console"
-])
+role = require_auth()
+
+page_options = ["✨ Submit Content", "🏅 Leaderboard"]
+if role in {"sergeant", "captain"}:
+    page_options.append("🛡️ Sergeant Console")
+
+page = st.sidebar.selectbox("Navigation", page_options)
 
 if page == "✨ Submit Content":
     st.title("✍️ Submit New Content")

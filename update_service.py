@@ -53,12 +53,10 @@ def four_week_windows(year: int, month: int) -> List[Tuple[date, date]]:
 
 class UpdateService:
     def __init__(self):
-        try:
-            url = st.secrets["SUPABASE_URL"]
-            key = st.secrets["SUPABASE_SERVICE_ROLE_KEY"]
-        except Exception:
-            url = os.getenv("SUPABASE_URL")
-            key = os.getenv("SUPABASE_SERVICE_ROLE_KEY") or os.getenv("SUPABASE_ANON_KEY")
+        url = os.getenv("SUPABASE_URL") or st.secrets.get("SUPABASE_URL")
+        key = os.getenv("SUPABASE_ANON_KEY") or st.secrets.get("SUPABASE_ANON_KEY")
+        if not url or not key:
+            raise ValueError("SUPABASE_URL and SUPABASE_ANON_KEY must be set")
 
         self.supabase = create_client(url, key)
         self._soldier_cache: Dict[str, Dict] = {}
@@ -473,3 +471,6 @@ class UpdateService:
             return True, "Updated"
         except Exception as e:
             return False, f"Error: {e}"
+
+    def set_auth_session(self, access_token: str, refresh_token: str) -> None:
+        self.supabase.auth.set_session(access_token, refresh_token)
