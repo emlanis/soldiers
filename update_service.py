@@ -124,6 +124,8 @@ class UpdateService:
         if not handle or not tweet_id:
             return None
         handle_norm = handle.lower()
+        if handle_norm == "i":
+            return f"https://x.com/i/status/{tweet_id}"
         return f"https://x.com/{handle_norm}/status/{tweet_id}"
 
     def _fetch_from_x_api(self, url: str) -> Dict:
@@ -207,9 +209,7 @@ class UpdateService:
             profile_handle = self._extract_profile_handle(soldier.get("profile_url"))
             soldier_handles = {h.lower() for h in [soldier_handle, profile_handle] if h}
 
-            if not url_handle and "/i/status/" in content_url:
-                return False, "Android X link not verifiable. Open the link in a browser and copy the full link with username."
-            if url_handle and soldier_handles and url_handle.lower() not in soldier_handles:
+            if url_handle and url_handle.lower() != "i" and soldier_handles and url_handle.lower() not in soldier_handles:
                 return False, "Link handle does not match selected soldier."
 
             # Prevent duplicates by tweet_id for this soldier
