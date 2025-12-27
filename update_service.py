@@ -217,6 +217,12 @@ class UpdateService:
             if existing.data:
                 return False, "Link already submitted for this soldier. Please submit a new link."
 
+            # Prevent duplicate /i/status links across all soldiers
+            if url_handle and url_handle.lower() == "i":
+                global_existing = self.supabase.table("posts").select("id").ilike("url", f"%{url_tweet_id}%").execute()
+                if global_existing.data:
+                    return False, "This link has already been submitted by another soldier."
+
             # Fetch meta only if allowed; otherwise rely on provided posted_at
             meta = self.fetch_tweet_meta(content_url) if use_auto_fetch else {}
             posted_at_final = posted_at or meta.get("posted_at")
