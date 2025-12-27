@@ -100,6 +100,25 @@ class UpdateService:
         except Exception:
             return None, None
 
+    def resolve_x_url(self, url: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+        handle, tweet_id = self.extract_handle_and_id(url)
+        if handle and handle.lower() != "i":
+            return url, handle, tweet_id
+        try:
+            resp = requests.get(
+                url,
+                allow_redirects=True,
+                timeout=10,
+                headers={"User-Agent": "Mozilla/5.0"},
+            )
+            final_url = resp.url
+            resolved_handle, resolved_id = self.extract_handle_and_id(final_url)
+            if resolved_handle and resolved_id:
+                return final_url, resolved_handle, resolved_id
+        except Exception:
+            pass
+        return None, None, tweet_id
+
     def normalize_x_url(self, url: str) -> Optional[str]:
         handle, tweet_id = self.extract_handle_and_id(url)
         if not handle or not tweet_id:
@@ -176,19 +195,22 @@ class UpdateService:
             if category not in {"TM", "SE", "SH"}:
                 return False, "Invalid category."
 
-            normalized_url = self.normalize_x_url(content_url)
+            resolved_url, url_handle, url_tweet_id = self.resolve_x_url(content_url)
+            if not url_tweet_id:
+                return False, "Invalid X link format."
+
+            normalized_url = self.normalize_x_url(resolved_url or content_url)
             if not normalized_url:
                 return False, "Invalid X link format."
 
             # Enforce link belongs to selected soldier
-            url_handle, url_tweet_id = self.extract_handle_and_id(content_url)
             profile_handle = self._extract_profile_handle(soldier.get("profile_url"))
             soldier_handles = {h.lower() for h in [soldier_handle, profile_handle] if h}
 
+            if not url_handle and "/i/status/" in content_url:
+                return False, "Android X link not verifiable. Open the link in a browser and copy the full link with username."
             if url_handle and soldier_handles and url_handle.lower() not in soldier_handles:
                 return False, "Link handle does not match selected soldier."
-            if not url_tweet_id:
-                return False, "Could not extract tweet ID."
 
             # Prevent duplicates by tweet_id for this soldier
             existing = self.supabase.table("posts").select("id").eq("soldier_id", soldier["id"]).ilike("url", f"%{url_tweet_id}%").execute()
