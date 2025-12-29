@@ -384,7 +384,9 @@ elif page == "🏅 Leaderboard":
     """
 
     available_months = service.get_available_months()
-    current_month = datetime.now()
+    today = datetime.now(timezone.utc).date()
+    _, kpi_end = current_kpi_window(today)
+    current_month = datetime(kpi_end.year, kpi_end.month, 1)
 
     col1, col2, col3 = st.columns([2, 2, 1])
     with col1:
@@ -392,10 +394,11 @@ elif page == "🏅 Leaderboard":
             month_options = []
             month_values = []
             current_option = f"{current_month.strftime('%B %Y')} (Current)"
+            current_key = (current_month.year, current_month.month)
             month_options.append(current_option)
-            month_values.append((current_month.year, current_month.month))
+            month_values.append(current_key)
             for year, month in available_months:
-                if not (year == current_month.year and month == current_month.month):
+                if (year, month) != current_key:
                     month_name = datetime(year, month, 1).strftime('%B %Y')
                     month_options.append(month_name)
                     month_values.append((year, month))

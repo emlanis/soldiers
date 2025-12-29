@@ -39,6 +39,27 @@ def start_of_week_window(target_date: date) -> date:
     return target_date - timedelta(days=(target_date.weekday() + 1) % 7)
 
 
+def _kpi_month_window(target_date: date) -> Tuple[date, date]:
+    month_start = date(target_date.year, target_date.month, 1)
+    # KPI month starts on the Sunday before the 1st of the month
+    start = month_start - timedelta(days=(month_start.weekday() + 1) % 7)
+    end = start + timedelta(days=27)
+    return start, end
+
+
+def current_kpi_window_for_date(target_date: date) -> Tuple[date, date]:
+    start, end = _kpi_month_window(target_date)
+    if target_date > end:
+        next_month = 1 if target_date.month == 12 else target_date.month + 1
+        next_year = target_date.year + (1 if target_date.month == 12 else 0)
+        start, end = _kpi_month_window(date(next_year, next_month, 1))
+    elif target_date < start:
+        prev_month = 12 if target_date.month == 1 else target_date.month - 1
+        prev_year = target_date.year - (1 if target_date.month == 1 else 0)
+        start, end = _kpi_month_window(date(prev_year, prev_month, 1))
+    return start, end
+
+
 def four_week_windows(year: int, month: int) -> List[Tuple[date, date]]:
     """Compute 4 week windows as specified (rolling Sunday starts)."""
     month_start = date(year, month, 1)
@@ -299,7 +320,8 @@ class UpdateService:
                     if not row.get("posted_at"):
                         continue
                     d = datetime.fromisoformat(row["posted_at"].replace("Z", "+00:00")).date()
-                    months.add((d.year, d.month))
+                    _, end = current_kpi_window_for_date(d)
+                    months.add((end.year, end.month))
             return sorted(list(months), reverse=True)
         except Exception:
             return []
