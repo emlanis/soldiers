@@ -450,18 +450,38 @@ class UpdateService:
             if not allowed_ids:
                 return False, "Not authorized"
             # Verify post belongs to allowed soldiers
-            post = self.supabase.table("posts").select("id,soldier_id").eq("id", post_id).execute()
+            post = self.supabase.table("posts").select("id,soldier_id,url,category").eq("id", post_id).execute()
             if getattr(post, "error", None):
                 return False, f"Error: {post.error}"
             if not post.data:
                 return False, "Post not found"
-            if post.data[0]["soldier_id"] not in allowed_ids:
+            record = post.data[0]
+            if record["soldier_id"] not in allowed_ids:
                 return False, "Not authorized"
+
+            url = record.get("url") or ""
+            category = record.get("category") or ""
+            base_url = url.replace("#auto-se", "")
+            auto_url = f"{base_url}#auto-se"
+            is_auto = url.endswith("#auto-se")
+
+            # Delete the requested row
             resp = self.supabase.table("posts").delete().eq("id", post_id).execute()
             if getattr(resp, "error", None):
                 return False, f"Error: {resp.error}"
+
+            # Clean up paired auto/primary entries
+            if is_auto:
+                cleanup = self.supabase.table("posts").delete().eq("soldier_id", record["soldier_id"]).eq("url", base_url).execute()
+                if getattr(cleanup, "error", None):
+                    return False, f"Error: {cleanup.error}"
+            elif category == "TM":
+                cleanup = self.supabase.table("posts").delete().eq("soldier_id", record["soldier_id"]).eq("url", auto_url).execute()
+                if getattr(cleanup, "error", None):
+                    return False, f"Error: {cleanup.error}"
+
             # Confirm deletion
-            check = self.supabase.table("posts").select("id").eq("id", post_id).execute()
+            check = self.supabase.table("posts").select("id").eq("soldier_id", record["soldier_id"]).in_("url", [base_url, auto_url]).execute()
             if getattr(check, "error", None):
                 return False, f"Error: {check.error}"
             if check.data:
