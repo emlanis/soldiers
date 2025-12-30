@@ -131,7 +131,7 @@ def profile_image_data_uri(handle: str) -> str:
 def render_profile_header(handle: str, title_html: str, subtitle_html: str = "") -> None:
     data_uri = profile_image_data_uri(handle)
     if data_uri:
-        subtitle_block = f"<div style="font-size:1.15rem;font-weight:600;">{subtitle_html}</div>" if subtitle_html else ""
+        subtitle_block = f'<div style="font-size:1.15rem;font-weight:600;">{subtitle_html}</div>' if subtitle_html else ""
         st.markdown(
             f"""
             <div style="display:flex;flex-direction:column;align-items:center;text-align:center;gap:0.35rem;margin-bottom:0.5rem;">
