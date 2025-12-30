@@ -4,7 +4,9 @@ Secret Soldiers KPI Dashboard - Submit X links with posted date fidelity and vie
 
 import os
 import json
+import base64
 import time
+from pathlib import Path
 from datetime import datetime, timedelta, timezone, date, time as dtime
 from typing import List, Tuple
 from urllib.parse import urlsplit, parse_qs
@@ -94,6 +96,56 @@ def get_secret(key: str, default: str = ""):
         return st.secrets.get(key, default)
     except Exception:
         return os.getenv(key, default)
+
+
+_PROFILE_IMAGE_MAP: dict = {}
+
+
+def _load_profile_images() -> None:
+    if _PROFILE_IMAGE_MAP:
+        return
+    img_dir = Path(__file__).resolve().parent / "img"
+    if not img_dir.exists():
+        return
+    for path in img_dir.iterdir():
+        if path.suffix.lower() not in {".jpg", ".jpeg", ".png"}:
+            continue
+        key = path.stem.strip().lower()
+        _PROFILE_IMAGE_MAP[key] = path
+
+
+@st.cache_data(show_spinner=False)
+def profile_image_data_uri(handle: str) -> str:
+    if not handle:
+        return ""
+    _load_profile_images()
+    key = handle.strip().lower()
+    path = _PROFILE_IMAGE_MAP.get(key)
+    if not path:
+        return ""
+    data = base64.b64encode(path.read_bytes()).decode("ascii")
+    mime = "image/png" if path.suffix.lower() == ".png" else "image/jpeg"
+    return f"data:{mime};base64,{data}"
+
+
+def render_profile_header(handle: str, title_html: str, subtitle_html: str = "") -> None:
+    data_uri = profile_image_data_uri(handle)
+    if data_uri:
+        subtitle_block = f"<div style="font-size:1.15rem;font-weight:600;">{subtitle_html}</div>" if subtitle_html else ""
+        st.markdown(
+            f"""
+            <div style="display:flex;flex-direction:column;align-items:center;text-align:center;gap:0.35rem;margin-bottom:0.5rem;">
+              <img src="{data_uri}" alt="{handle}" style="width:72px;height:72px;border-radius:50%;object-fit:cover;border:2px solid #FF3912;" />
+              <div style="font-size:1.6rem;font-weight:700;">{title_html}</div>
+              {subtitle_block}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    else:
+        st.markdown(f"## {title_html}")
+        if subtitle_html:
+            st.markdown(f"### {subtitle_html}")
 
 
 def persist_auth_session():
@@ -411,8 +463,7 @@ page = st.sidebar.selectbox("Navigation", page_options)
 if page == "✨ Submit Content":
     handle = st.session_state.get("user_handle")
     if handle:
-        st.markdown(f"## gm {handle} ⚡️🛡️")
-        st.markdown("### ✍️ Submit New Content")
+        render_profile_header(handle, f"gm {handle} ⚡️🛡️", "✍️ Submit New Content")
     else:
         st.title("✍️ Submit New Content")
     st.caption("Thread auto-adds +6 units to Secret's Engagement on the same posted date. If OP is a meme NOT a thread, ADD it to Secret's Engagement.")
@@ -464,14 +515,16 @@ if page == "✨ Submit Content":
                     st.error(f"❌ {message}")
 
 elif page == "🏅 Leaderboard":
-    st.markdown('<h1 style="color:#FF3912;">Leaderboard</h1>', unsafe_allow_html=True)
     role = st.session_state.get("user_role")
     handle = st.session_state.get("user_handle")
     if handle:
+        render_profile_header(handle, '<span style="color:#FF3912;">Leaderboard</span>')
         if role == "soldier":
             st.markdown(f"Hey {handle}, check the leaderboard to see how you’re doing in the battlefield 😎")
         else:
             st.markdown(f"Hey {handle}, check the leaderboard to see how your soldiers are doing in the battlefield 😎")
+    else:
+        st.markdown('<h1 style="color:#FF3912;">Leaderboard</h1>', unsafe_allow_html=True)
 
     _table_css = """
     <style>
@@ -634,7 +687,10 @@ elif page == "🛡️ Sergeant Console":
     is_captain = role == "captain"
     is_super_sergeant = user_email == "emlanis@scrt.network"
     header_title = "Captain Console" if is_captain else "Sergeant Console"
-    st.markdown(f'<h1 style="color:#FF3912;">{header_title}</h1>', unsafe_allow_html=True)
+    if user_handle:
+        render_profile_header(user_handle, f'<span style="color:#FF3912;">{header_title}</span>')
+    else:
+        st.markdown(f'<h1 style="color:#FF3912;">{header_title}</h1>', unsafe_allow_html=True)
     sergeant_map = {
         "emlanis@scrt.network": ["Chiemerie", "Raheem", "Olarx", "Jigga"],
         "adeniyiabdulwahab372@gmail.com": ["BigBoss", "Ozed", "JohnnyLee", "QeengD"],
