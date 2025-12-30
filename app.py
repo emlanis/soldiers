@@ -73,6 +73,22 @@ def current_kpi_window(today: date) -> Tuple[date, date]:
     return start, end
 
 
+def start_of_week_window(target_date: date) -> date:
+    """Return the Sunday that starts the 4-week window containing the month start."""
+    return target_date - timedelta(days=(target_date.weekday() + 1) % 7)
+
+
+def four_week_windows(year: int, month: int) -> List[Tuple[date, date]]:
+    month_start = date(year, month, 1)
+    week1_start = start_of_week_window(month_start)
+    windows = []
+    for i in range(4):
+        start = week1_start + timedelta(days=7 * i)
+        end = start + timedelta(days=6)
+        windows.append((start, end))
+    return windows
+
+
 def get_secret(key: str, default: str = ""):
     try:
         return st.secrets.get(key, default)
@@ -649,58 +665,111 @@ elif page == "🛡️ Sergeant Console":
         id_to_handle = {s["id"]: s["handle"] for s in soldiers}
 
         filter_cols = st.columns([2, 2, 2, 1])
-        filter_options = ["All"] + sorted(
+        filter_options = sorted(
             set([id_to_handle.get(p["soldier_id"], "Unknown") for p in posts if id_to_handle.get(p["soldier_id"])])
         )
-        chosen = filter_cols[0].selectbox("Filter by soldier", filter_options)
-
-        if chosen != "All":
-            posts = [p for p in posts if id_to_handle.get(p["soldier_id"], "") == chosen]
-
-        date_options = ["All"] + sorted(
-            {
-                (p.get("posted_at") or "")[:10]
-                for p in posts
-                if isinstance(p.get("posted_at"), str)
-            },
-            reverse=True,
-        )
-        selected_date = filter_cols[1].selectbox("Filter by date", date_options)
-        if selected_date != "All":
+        chosen_soldiers = filter_cols[0].multiselect("Filter by soldier", filter_options, default=[])
+        if chosen_soldiers:
             posts = [
                 p
                 for p in posts
-                if isinstance(p.get("posted_at"), str) and p.get("posted_at", "").startswith(selected_date)
+                if id_to_handle.get(p["soldier_id"], "") in chosen_soldiers
             ]
+
+        def _post_date(row):
+            posted_at = row.get("posted_at")
+            if isinstance(posted_at, str):
+                try:
+                    return datetime.fromisoformat(posted_at.replace("Z", "+00:00")).date()
+                except Exception:
+                    return None
+            if isinstance(posted_at, datetime):
+                return posted_at.date()
+            return None
+
+        date_filter_mode = filter_cols[1].selectbox(
+            "Filter by date",
+            ["All dates", "Custom range", "KPI month window", "KPI week window"],
+        )
+
+        date_range = None
+        today = datetime.now(timezone.utc).date()
+        if date_filter_mode == "Custom range":
+            range_val = st.date_input("Date range", value=(today, today), key="date_range")
+            if isinstance(range_val, tuple):
+                start_date, end_date = range_val
+            else:
+                start_date = end_date = range_val
+            if start_date and end_date:
+                date_range = (min(start_date, end_date), max(start_date, end_date))
+        elif date_filter_mode == "KPI month window":
+            month_options = []
+            month_values = []
+            current_start, current_end = current_kpi_window(today)
+            current_label = f"{current_end.strftime('%B %Y')} (Current)"
+            month_options.append(current_label)
+            month_values.append((current_end.year, current_end.month))
+            for year, month in service.get_available_months():
+                if (year, month) != (current_end.year, current_end.month):
+                    month_name = datetime(year, month, 1).strftime('%B %Y')
+                    month_options.append(month_name)
+                    month_values.append((year, month))
+            selected_idx = st.selectbox(
+                "KPI month window",
+                range(len(month_options)),
+                format_func=lambda x: month_options[x],
+                key="kpi_month_filter",
+            )
+            year, month = month_values[selected_idx]
+            start_date, end_date = _kpi_month_window(date(year, month, 1))
+            st.caption(f"Window: {start_date} → {end_date}")
+            date_range = (start_date, end_date)
+        elif date_filter_mode == "KPI week window":
+            month_options = []
+            month_values = []
+            current_start, current_end = current_kpi_window(today)
+            current_label = f"{current_end.strftime('%B %Y')} (Current)"
+            month_options.append(current_label)
+            month_values.append((current_end.year, current_end.month))
+            for year, month in service.get_available_months():
+                if (year, month) != (current_end.year, current_end.month):
+                    month_name = datetime(year, month, 1).strftime('%B %Y')
+                    month_options.append(month_name)
+                    month_values.append((year, month))
+            month_idx = st.selectbox(
+                "KPI month for weeks",
+                range(len(month_options)),
+                format_func=lambda x: month_options[x],
+                key="kpi_week_month_filter",
+            )
+            year, month = month_values[month_idx]
+            week_windows = four_week_windows(year, month)
+            week_labels = [
+                f"Week {i+1}: {window[0]} → {window[1]}"
+                for i, window in enumerate(week_windows)
+            ]
+            week_idx = st.selectbox(
+                "KPI week window",
+                range(len(week_labels)),
+                format_func=lambda x: week_labels[x],
+                key="kpi_week_filter",
+            )
+            start_date, end_date = week_windows[week_idx]
+            date_range = (start_date, end_date)
+
+        if date_range:
+            start_date, end_date = date_range
+            filtered = []
+            for p in posts:
+                d = _post_date(p)
+                if d and start_date <= d <= end_date:
+                    filtered.append(p)
+            posts = filtered
 
         category_options = ["All"] + sorted({p.get("category") for p in posts if p.get("category")})
         selected_category = filter_cols[2].selectbox("Filter by category", category_options)
         if selected_category != "All":
             posts = [p for p in posts if p.get("category") == selected_category]
-
-        filter_key = (chosen, selected_date, selected_category)
-        if st.session_state.get("posts_filter_key") != filter_key:
-            st.session_state.posts_filter_key = filter_key
-            st.session_state.posts_page = 1
-
-        total_entries = len(posts)
-        page_size = 50
-        total_pages = max(1, (total_entries + page_size - 1) // page_size)
-        current_page = st.session_state.get("posts_page", 1)
-        if current_page > total_pages:
-            current_page = total_pages
-        start_idx = (current_page - 1) * page_size
-        end_idx = start_idx + page_size
-        page_posts = posts[start_idx:end_idx]
-
-        page_cols = st.columns([1, 1, 2, 1, 1])
-        if page_cols[1].button("Prev", disabled=current_page <= 1, key="posts_prev"):
-            st.session_state.posts_page = current_page - 1
-            st.rerun()
-        page_cols[2].markdown(f"Page {current_page} of {total_pages}")
-        if page_cols[3].button("Next", disabled=current_page >= total_pages, key="posts_next"):
-            st.session_state.posts_page = current_page + 1
-            st.rerun()
 
         filter_cols[3].markdown(
             """
