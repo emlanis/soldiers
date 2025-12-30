@@ -593,23 +593,25 @@ elif page == "🏅 Leaderboard":
         st.info("📝 No leaderboard data yet.")
 
 elif page == "🛡️ Sergeant Console":
-    st.markdown('<h1 style="color:#FF3912;">Sergeant Console</h1>', unsafe_allow_html=True)
+    role = st.session_state.get("user_role")
+    user_email = (st.session_state.get("user_email") or "").lower()
+    is_captain = role == "captain"
+    is_super_sergeant = user_email == "emlanis@scrt.network"
+    header_title = "Captain Console" if is_captain else "Sergeant Console"
+    st.markdown(f'<h1 style="color:#FF3912;">{header_title}</h1>', unsafe_allow_html=True)
     sergeant_map = {
         "emlanis@scrt.network": ["Chiemerie", "Raheem", "Olarx", "Jigga"],
         "adeniyiabdulwahab372@gmail.com": ["BigBoss", "Ozed", "JohnnyLee", "QeengD"],
         "thisismohammedaliyu@gmail.com": ["ChisomBrown", "Shamex", "Murad"],
     }
 
-    role = st.session_state.get("user_role")
-    user_email = (st.session_state.get("user_email") or "").lower()
-
     if role not in {"sergeant", "captain"}:
         st.error("Not authorized")
         st.stop()
 
-    if role == "captain":
+    if is_captain or is_super_sergeant:
         allowed = [s["handle"] for s in service.get_soldiers()]
-        st.write("Logged in as **Captain**")
+        st.write("Logged in as **Captain**" if is_captain else "Logged in as **emlanis (all soldiers)**")
     else:
         allowed = sergeant_map.get(user_email, [])
         st.write(f"Logged in as **{user_email}**")
