@@ -110,7 +110,7 @@ def _load_profile_images() -> None:
     for path in img_dir.iterdir():
         if path.suffix.lower() not in {".jpg", ".jpeg", ".png"}:
             continue
-        key = path.stem.strip().lower()
+        key = path.stem.strip().lstrip("@").lower()
         _PROFILE_IMAGE_MAP[key] = path
 
 
@@ -119,7 +119,7 @@ def profile_image_data_uri(handle: str) -> str:
     if not handle:
         return ""
     _load_profile_images()
-    key = handle.strip().lower()
+    key = handle.strip().lstrip("@").lower()
     path = _PROFILE_IMAGE_MAP.get(key)
     if not path:
         return ""
@@ -130,8 +130,8 @@ def profile_image_data_uri(handle: str) -> str:
 
 def render_profile_header(handle: str, title_html: str, subtitle_html: str = "") -> None:
     data_uri = profile_image_data_uri(handle)
+    subtitle_block = f'<div style="font-size:1.15rem;font-weight:600;">{subtitle_html}</div>' if subtitle_html else ""
     if data_uri:
-        subtitle_block = f'<div style="font-size:1.15rem;font-weight:600;">{subtitle_html}</div>' if subtitle_html else ""
         st.markdown(
             f"""
             <div style="display:flex;flex-direction:column;align-items:center;text-align:center;gap:0.35rem;margin-bottom:0.5rem;">
@@ -143,9 +143,15 @@ def render_profile_header(handle: str, title_html: str, subtitle_html: str = "")
             unsafe_allow_html=True,
         )
     else:
-        st.markdown(f"## {title_html}")
-        if subtitle_html:
-            st.markdown(f"### {subtitle_html}")
+        st.markdown(
+            f"""
+            <div style="display:flex;flex-direction:column;align-items:center;text-align:center;gap:0.35rem;margin-bottom:0.5rem;">
+              <div style="font-size:1.6rem;font-weight:700;">{title_html}</div>
+              {subtitle_block}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
 
 def persist_auth_session():
