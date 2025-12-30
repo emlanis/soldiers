@@ -76,14 +76,16 @@ def current_kpi_window(today: date) -> Tuple[date, date]:
 
 
 def kpi_month_sequence(today: date, count: int = 6) -> List[Tuple[int, int]]:
-    start, end = current_kpi_window(today)
+    _, end = current_kpi_window(today)
     months = []
-    cursor_start = start
-    cursor_end = end
-    for _ in range(count):
-        months.append((cursor_end.year, cursor_end.month))
-        cursor_start = cursor_start - timedelta(days=28)
-        cursor_end = cursor_start + timedelta(days=27)
+    year, month = end.year, end.month
+    for i in range(count):
+        m = month - i
+        y = year
+        while m <= 0:
+            m += 12
+            y -= 1
+        months.append((y, m))
     return months
 
 
@@ -556,33 +558,31 @@ elif page == "🏅 Leaderboard":
 
     available_months = service.get_available_months()
     today = datetime.now(timezone.utc).date()
-    _, kpi_end = current_kpi_window(today)
-    current_month = datetime(kpi_end.year, kpi_end.month, 1)
+    current_start, current_end = current_kpi_window(today)
+    current_key = (current_end.year, current_end.month)
 
     col1, col2, col3 = st.columns([2, 2, 1])
     with col1:
-        if available_months:
-            month_options = []
-            month_values = []
-            current_option = f"{current_month.strftime('%B %Y')} (Current)"
-            current_key = (current_month.year, current_month.month)
-            month_options.append(current_option)
-            month_values.append(current_key)
-            for year, month in available_months:
-                if (year, month) != current_key:
-                    month_name = datetime(year, month, 1).strftime('%B %Y')
-                    month_options.append(month_name)
-                    month_values.append((year, month))
-            selected_index = st.selectbox(
-                "Select Month:",
-                range(len(month_options)),
-                format_func=lambda x: month_options[x],
-                key="month_select_x",
-            )
-            selected_year, selected_month = month_values[selected_index]
-        else:
-            selected_year, selected_month = current_month.year, current_month.month
-            st.info("No historical data available")
+        month_options = []
+        month_values = []
+        for year, month in kpi_month_sequence(today, 6):
+            label = datetime(year, month, 1).strftime('%B %Y')
+            if (year, month) == current_key:
+                label = f"{label} (Current)"
+            month_options.append(label)
+            month_values.append((year, month))
+        for year, month in available_months:
+            if (year, month) not in month_values:
+                month_name = datetime(year, month, 1).strftime('%B %Y')
+                month_options.append(month_name)
+                month_values.append((year, month))
+        selected_index = st.selectbox(
+            "Select Month:",
+            range(len(month_options)),
+            format_func=lambda x: month_options[x],
+            key="month_select_x",
+        )
+        selected_year, selected_month = month_values[selected_index]
 
     with col3:
         if st.button("🔄 Refresh", key="refresh_leaderboard"):

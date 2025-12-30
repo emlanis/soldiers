@@ -234,9 +234,29 @@ class UpdateService:
                 return False, "Link handle does not match selected soldier."
 
             # Prevent duplicates by tweet_id for this soldier
-            existing = self.supabase.table("posts").select("id").eq("soldier_id", soldier["id"]).ilike("url", f"%{url_tweet_id}%").execute()
+            existing = (
+                self.supabase
+                .table("posts")
+                .select("id,url,category")
+                .eq("soldier_id", soldier["id"])
+                .ilike("url", f"%{url_tweet_id}%")
+                .execute()
+            )
             if existing.data:
-                return False, "Link already submitted for this soldier. Please submit a new link."
+                non_auto = [row for row in existing.data if not str(row.get("url", "")).endswith("#auto-se")]
+                if non_auto:
+                    return False, "Link already submitted for this soldier. Please submit a new link."
+                # If only auto-SE rows remain, clear them so resubmission works
+                cleanup = (
+                    self.supabase
+                    .table("posts")
+                    .delete()
+                    .eq("soldier_id", soldier["id"])
+                    .ilike("url", f"%{url_tweet_id}%")
+                    .execute()
+                )
+                if getattr(cleanup, "error", None):
+                    return False, f"Error: {cleanup.error}"
 
             # Prevent duplicate /i/status links across all soldiers
             if url_handle and url_handle.lower() == "i":
