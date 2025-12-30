@@ -481,6 +481,7 @@ class UpdateService:
             base_url = url.replace("#auto-se", "")
             auto_url = f"{base_url}#auto-se"
             is_auto = url.endswith("#auto-se")
+            tweet_id = self.extract_handle_and_id(base_url)[1] if base_url else None
 
             # Delete the requested row
             resp = self.supabase.table("posts").delete().eq("id", post_id).execute()
@@ -497,8 +498,21 @@ class UpdateService:
                 if getattr(cleanup, "error", None):
                     return False, f"Error: {cleanup.error}"
 
+            # Remove any remaining rows for this tweet id (prevents duplicate rejections)
+            if tweet_id:
+                cleanup = (
+                    self.supabase
+                    .table("posts")
+                    .delete()
+                    .eq("soldier_id", record["soldier_id"])
+                    .ilike("url", f"%{tweet_id}%")
+                    .execute()
+                )
+                if getattr(cleanup, "error", None):
+                    return False, f"Error: {cleanup.error}"
+
             # Confirm deletion
-            check = self.supabase.table("posts").select("id").eq("soldier_id", record["soldier_id"]).in_("url", [base_url, auto_url]).execute()
+            check = self.supabase.table("posts").select("id").eq("soldier_id", record["soldier_id"]).ilike("url", f"%{tweet_id}%").execute()
             if getattr(check, "error", None):
                 return False, f"Error: {check.error}"
             if check.data:

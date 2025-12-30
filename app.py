@@ -75,6 +75,18 @@ def current_kpi_window(today: date) -> Tuple[date, date]:
     return start, end
 
 
+def kpi_month_sequence(today: date, count: int = 6) -> List[Tuple[int, int]]:
+    start, end = current_kpi_window(today)
+    months = []
+    cursor_start = start
+    cursor_end = end
+    for _ in range(count):
+        months.append((cursor_end.year, cursor_end.month))
+        cursor_start = cursor_start - timedelta(days=28)
+        cursor_end = cursor_start + timedelta(days=27)
+    return months
+
+
 def start_of_week_window(target_date: date) -> date:
     """Return the Sunday that starts the 4-week window containing the month start."""
     return target_date - timedelta(days=(target_date.weekday() + 1) % 7)
@@ -768,11 +780,15 @@ elif page == "🛡️ Sergeant Console":
             month_options = []
             month_values = []
             current_start, current_end = current_kpi_window(today)
-            current_label = f"{current_end.strftime('%B %Y')} (Current)"
-            month_options.append(current_label)
-            month_values.append((current_end.year, current_end.month))
+            current_key = (current_end.year, current_end.month)
+            for year, month in kpi_month_sequence(today, 6):
+                label = datetime(year, month, 1).strftime('%B %Y')
+                if (year, month) == current_key:
+                    label = f"{label} (Current)"
+                month_options.append(label)
+                month_values.append((year, month))
             for year, month in service.get_available_months():
-                if (year, month) != (current_end.year, current_end.month):
+                if (year, month) not in month_values:
                     month_name = datetime(year, month, 1).strftime('%B %Y')
                     month_options.append(month_name)
                     month_values.append((year, month))
@@ -790,11 +806,15 @@ elif page == "🛡️ Sergeant Console":
             month_options = []
             month_values = []
             current_start, current_end = current_kpi_window(today)
-            current_label = f"{current_end.strftime('%B %Y')} (Current)"
-            month_options.append(current_label)
-            month_values.append((current_end.year, current_end.month))
+            current_key = (current_end.year, current_end.month)
+            for year, month in kpi_month_sequence(today, 6):
+                label = datetime(year, month, 1).strftime('%B %Y')
+                if (year, month) == current_key:
+                    label = f"{label} (Current)"
+                month_options.append(label)
+                month_values.append((year, month))
             for year, month in service.get_available_months():
-                if (year, month) != (current_end.year, current_end.month):
+                if (year, month) not in month_values:
                     month_name = datetime(year, month, 1).strftime('%B %Y')
                     month_options.append(month_name)
                     month_values.append((year, month))
