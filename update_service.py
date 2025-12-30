@@ -439,8 +439,25 @@ class UpdateService:
         ids = [handle_to_id[h.lower()] for h in handles if h.lower() in handle_to_id]
         if not ids:
             return []
-        resp = self.supabase.table("posts").select("*").in_("soldier_id", ids).order("posted_at", desc=True).execute()
-        return resp.data or []
+        page_size = 1000
+        start = 0
+        rows: List[Dict] = []
+        while True:
+            resp = (
+                self.supabase
+                .table("posts")
+                .select("*")
+                .in_("soldier_id", ids)
+                .order("posted_at", desc=True)
+                .range(start, start + page_size - 1)
+                .execute()
+            )
+            batch = resp.data or []
+            rows.extend(batch)
+            if len(batch) < page_size:
+                break
+            start += page_size
+        return rows
 
     def delete_post(self, post_id: str, allowed_handles: List[str]) -> Tuple[bool, str]:
         try:

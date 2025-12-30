@@ -678,6 +678,30 @@ elif page == "🛡️ Sergeant Console":
         if selected_category != "All":
             posts = [p for p in posts if p.get("category") == selected_category]
 
+        filter_key = (chosen, selected_date, selected_category)
+        if st.session_state.get("posts_filter_key") != filter_key:
+            st.session_state.posts_filter_key = filter_key
+            st.session_state.posts_page = 1
+
+        total_entries = len(posts)
+        page_size = 50
+        total_pages = max(1, (total_entries + page_size - 1) // page_size)
+        current_page = st.session_state.get("posts_page", 1)
+        if current_page > total_pages:
+            current_page = total_pages
+        start_idx = (current_page - 1) * page_size
+        end_idx = start_idx + page_size
+        page_posts = posts[start_idx:end_idx]
+
+        page_cols = st.columns([1, 1, 2, 1, 1])
+        if page_cols[1].button("Prev", disabled=current_page <= 1, key="posts_prev"):
+            st.session_state.posts_page = current_page - 1
+            st.rerun()
+        page_cols[2].markdown(f"Page {current_page} of {total_pages}")
+        if page_cols[3].button("Next", disabled=current_page >= total_pages, key="posts_next"):
+            st.session_state.posts_page = current_page + 1
+            st.rerun()
+
         filter_cols[3].markdown(
             """
             <style>
@@ -686,7 +710,7 @@ elif page == "🛡️ Sergeant Console":
             """,
             unsafe_allow_html=True,
         )
-        filter_cols[3].metric("Total Entries", len(posts))
+        filter_cols[3].metric("Total Entries", total_entries)
 
         st.write("Use Edit to update posted date or category. Use Delete to remove a submission.")
 
@@ -696,7 +720,7 @@ elif page == "🛡️ Sergeant Console":
             "SH": "Shill",
         }
 
-        for p in posts:
+        for p in page_posts:
             post_id = p.get("id")
             soldier_name = id_to_handle.get(p.get("soldier_id"), "Unknown")
             posted_at_val = p.get("posted_at")
