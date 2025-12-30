@@ -150,9 +150,15 @@ def require_auth():
     auth_client = get_auth_client()
     user = load_session()
     if user:
-        role = (user.app_metadata or {}).get("role")
+        app_meta = user.app_metadata or {}
+        user_meta = user.user_metadata or {}
+        role = app_meta.get("role")
+        handle = app_meta.get("handle") or user_meta.get("display_name") or user_meta.get("full_name") or user_meta.get("name")
+        if not handle and user.email:
+            handle = user.email.split("@")[0]
         st.session_state.user_role = role
         st.session_state.user_email = user.email
+        st.session_state.user_handle = handle
         persist_auth_session()
         st.sidebar.write(f"Logged in: {user.email}")
         if st.sidebar.button("Logout"):
@@ -162,6 +168,7 @@ def require_auth():
                 st.session_state.pop("auth_session", None)
                 st.session_state.pop("user_role", None)
                 st.session_state.pop("user_email", None)
+                st.session_state.pop("user_handle", None)
                 st.session_state.pop("pending_password", None)
                 st.session_state.pop("pending_password_type", None)
                 clear_persisted_session()
@@ -386,7 +393,13 @@ if role in {"sergeant", "captain"}:
 page = st.sidebar.selectbox("Navigation", page_options)
 
 if page == "✨ Submit Content":
-    st.title("✍️ Submit New Content")
+    role = st.session_state.get("user_role")
+    handle = st.session_state.get("user_handle")
+    if role == "soldier" and handle:
+        st.markdown(f"## gm {handle} ⚡️🛡️")
+        st.markdown("### ✍️ Submit New Content")
+    else:
+        st.title("✍️ Submit New Content")
     st.caption("Thread auto-adds +6 units to Secret's Engagement on the same posted date. If OP is a meme NOT a thread, ADD it to Secret's Engagement.")
 
     soldiers = service.get_soldiers()
@@ -437,6 +450,13 @@ if page == "✨ Submit Content":
 
 elif page == "🏅 Leaderboard":
     st.markdown('<h1 style="color:#FF3912;">Leaderboard</h1>', unsafe_allow_html=True)
+    role = st.session_state.get("user_role")
+    handle = st.session_state.get("user_handle")
+    if handle:
+        if role == "soldier":
+            st.markdown(f"Hey {handle}, check the leaderboard to see how you’re doing in the battlefield 😎")
+        else:
+            st.markdown(f"Hey {handle}, check the leaderboard to see how your soldiers are doing in the battlefield 😎")
 
     _table_css = """
     <style>
@@ -595,6 +615,7 @@ elif page == "🏅 Leaderboard":
 elif page == "🛡️ Sergeant Console":
     role = st.session_state.get("user_role")
     user_email = (st.session_state.get("user_email") or "").lower()
+    user_handle = st.session_state.get("user_handle") or user_email.split("@")[0]
     is_captain = role == "captain"
     is_super_sergeant = user_email == "emlanis@scrt.network"
     header_title = "Captain Console" if is_captain else "Sergeant Console"
@@ -611,10 +632,12 @@ elif page == "🛡️ Sergeant Console":
 
     if is_captain or is_super_sergeant:
         allowed = [s["handle"] for s in service.get_soldiers()]
-        st.write("Logged in as **Captain**" if is_captain else "Logged in as **emlanis (all soldiers)**")
+        st.write(f"Logged in as **{user_handle}**")
+        if is_super_sergeant:
+            st.caption("All soldiers access")
     else:
         allowed = sergeant_map.get(user_email, [])
-        st.write(f"Logged in as **{user_email}**")
+        st.write(f"Logged in as **{user_handle}**")
         if not allowed:
             st.error("No soldier access configured for this account")
             st.stop()
