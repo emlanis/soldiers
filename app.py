@@ -3,6 +3,7 @@ Secret Soldiers KPI Dashboard - Submit X links with posted date fidelity and vie
 """
 
 import os
+import json
 import time
 from datetime import datetime, timedelta, timezone, date, time as dtime
 from typing import List, Tuple
@@ -79,6 +80,43 @@ def get_secret(key: str, default: str = ""):
         return os.getenv(key, default)
 
 
+def persist_auth_session():
+    session = st.session_state.get("auth_session")
+    if not session:
+        return
+    access_token = session.get("access_token")
+    refresh_token = session.get("refresh_token")
+    if not access_token or not refresh_token:
+        return
+    payload = json.dumps({"access_token": access_token, "refresh_token": refresh_token})
+    components.html(
+        f"""
+        <script>
+        (function() {{
+          const data = {payload};
+          localStorage.setItem("ss_access_token", data.access_token);
+          localStorage.setItem("ss_refresh_token", data.refresh_token);
+        }})();
+        </script>
+        """,
+        height=0,
+    )
+
+
+def clear_persisted_session():
+    components.html(
+        """
+        <script>
+        (function() {
+          localStorage.removeItem("ss_access_token");
+          localStorage.removeItem("ss_refresh_token");
+        })();
+        </script>
+        """,
+        height=0,
+    )
+
+
 def get_auth_client():
     if "auth_client" not in st.session_state:
         url = get_secret("SUPABASE_URL")
@@ -115,6 +153,7 @@ def require_auth():
         role = (user.app_metadata or {}).get("role")
         st.session_state.user_role = role
         st.session_state.user_email = user.email
+        persist_auth_session()
         st.sidebar.write(f"Logged in: {user.email}")
         if st.sidebar.button("Logout"):
             try:
@@ -125,6 +164,7 @@ def require_auth():
                 st.session_state.pop("user_email", None)
                 st.session_state.pop("pending_password", None)
                 st.session_state.pop("pending_password_type", None)
+                clear_persisted_session()
                 try:
                     st.query_params.clear()
                 except Exception:
@@ -134,6 +174,27 @@ def require_auth():
             st.error("Your account has no role assigned. Contact an admin.")
             st.stop()
         return role
+
+    components.html(
+        """
+        <script>
+        (function() {
+          const parent = window.parent;
+          const access = localStorage.getItem("ss_access_token");
+          const refresh = localStorage.getItem("ss_refresh_token");
+          if (access && refresh && !parent.location.search.includes("access_token=")) {
+            const url = new URL(parent.location.href);
+            url.hash = "";
+            url.searchParams.set("access_token", access);
+            url.searchParams.set("refresh_token", refresh);
+            parent.location.replace(url.toString());
+            return;
+          }
+        })();
+        </script>
+        """,
+        height=0,
+    )
 
     components.html(
         """
@@ -175,6 +236,7 @@ def require_auth():
             "access_token": access_token,
             "refresh_token": refresh_token,
         }
+        persist_auth_session()
         st.session_state.pending_password = True
         st.session_state.pending_password_type = invite_type or "recovery"
         try:
@@ -225,6 +287,7 @@ def require_auth():
                             "access_token": res.session.access_token,
                             "refresh_token": res.session.refresh_token,
                         }
+                        persist_auth_session()
                         st.session_state.pending_password = False
                         st.session_state.pending_password_type = None
                         st.success("Password updated. You are now logged in.")
@@ -253,6 +316,7 @@ def require_auth():
                             "access_token": res.session.access_token,
                             "refresh_token": res.session.refresh_token,
                         }
+                        persist_auth_session()
                         st.rerun()
                     else:
                         st.error("Login failed")
@@ -292,6 +356,7 @@ def require_auth():
                                 "access_token": res.session.access_token,
                                 "refresh_token": res.session.refresh_token,
                             }
+                            persist_auth_session()
                             st.session_state.pending_password = False
                             st.session_state.pending_password_type = None
                             st.success("Password set. You are now logged in.")
