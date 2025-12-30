@@ -393,9 +393,8 @@ if role in {"sergeant", "captain"}:
 page = st.sidebar.selectbox("Navigation", page_options)
 
 if page == "✨ Submit Content":
-    role = st.session_state.get("user_role")
     handle = st.session_state.get("user_handle")
-    if role == "soldier" and handle:
+    if handle:
         st.markdown(f"## gm {handle} ⚡️🛡️")
         st.markdown("### ✍️ Submit New Content")
     else:
