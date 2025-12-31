@@ -48,6 +48,9 @@ st.markdown(
 )
 
 load_dotenv()
+if "remember_me" not in st.session_state:
+    st.session_state.remember_me = False
+
 
 
 def _kpi_month_window(target_date: date) -> Tuple[date, date]:
@@ -165,6 +168,9 @@ def render_profile_header(handle: str, title_html: str, subtitle_html: str = "")
 
 
 def persist_auth_session():
+    if not st.session_state.get("remember_me"):
+        clear_persisted_session()
+        return
     session = st.session_state.get("auth_session")
     if not session:
         return
@@ -187,13 +193,13 @@ def persist_auth_session():
           if (store) {{
             store.setItem("ss_access_token", data.access_token);
             store.setItem("ss_refresh_token", data.refresh_token);
+            store.setItem("ss_remember", "1");
           }}
         }})();
         </script>
         """,
         height=0,
     )
-
 
 def clear_persisted_session():
     components.html(
@@ -209,6 +215,7 @@ def clear_persisted_session():
           if (store) {
             store.removeItem("ss_access_token");
             store.removeItem("ss_refresh_token");
+            store.removeItem("ss_remember");
           }
         })();
         </script>
@@ -296,7 +303,8 @@ def require_auth():
           if (!store) return;
           const access = store.getItem("ss_access_token");
           const refresh = store.getItem("ss_refresh_token");
-          if (access && refresh && !parent.location.search.includes("access_token=")) {
+          const remember = store.getItem("ss_remember");
+          if ((remember === "1" || remember === null) && access && refresh && !parent.location.search.includes("access_token=")) {
             const url = new URL(parent.location.href);
             url.hash = "";
             url.searchParams.set("access_token", access);
@@ -424,6 +432,8 @@ def require_auth():
         with st.form("login_form"):
             email = st.text_input("Email")
             password = st.text_input("Password", type="password")
+            st.checkbox("Keep me signed in on this device", value=st.session_state.get("remember_me", False), key="remember_me")
+            st.caption("Use this only on a personal device.")
             btn_row = st.columns([1, 2, 2, 1])
             with btn_row[1]:
                 sign_in = st.form_submit_button("Sign in")
