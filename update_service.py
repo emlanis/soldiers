@@ -243,10 +243,7 @@ class UpdateService:
                 .execute()
             )
             if existing.data:
-                non_auto = [row for row in existing.data if not str(row.get("url", "")).endswith("#auto-se")]
-                if non_auto:
-                    return False, "Link already submitted for this soldier. Please submit a new link."
-                # If only auto-SE rows remain, clear them so resubmission works
+                # Clean up any stale rows for this tweet id, then proceed
                 cleanup = (
                     self.supabase
                     .table("posts")
