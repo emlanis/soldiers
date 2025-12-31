@@ -426,7 +426,9 @@ class UpdateService:
                 posted_at = datetime.fromisoformat(posted_raw.replace("Z", "+00:00"))
             except Exception:
                 continue
-            day_key = posted_at.date()
+            if posted_at.tzinfo is None:
+                posted_at = posted_at.replace(tzinfo=timezone.utc)
+            day_key = posted_at.astimezone(timezone.utc).date()
             if day_key < start or day_key > end:
                 continue
 
