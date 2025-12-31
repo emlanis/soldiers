@@ -83,6 +83,7 @@ class UpdateService:
 
         self.supabase = create_client(url, key)
         self._soldier_cache: Dict[str, Dict] = {}
+        self._last_soldier_refresh = None
 
         # Optional tweet meta sources
         self.x_bearer_token = os.getenv("X_BEARER_TOKEN")
@@ -91,17 +92,23 @@ class UpdateService:
     # -------------------------------------------------------------
     # Soldier helpers
     # -------------------------------------------------------------
+    def _soldier_cache_stale(self) -> bool:
+        if not self._last_soldier_refresh:
+            return True
+        return datetime.now(timezone.utc) - self._last_soldier_refresh > timedelta(minutes=5)
+
     def refresh_soldiers(self):
         resp = self.supabase.table("soldiers").select("id, handle, profile_url").execute()
         self._soldier_cache = {row["handle"]: row for row in resp.data if row.get("handle", "").lower() != "pgm"} if resp.data else {}
+        self._last_soldier_refresh = datetime.now(timezone.utc)
 
     def get_soldiers(self) -> List[Dict]:
-        if not self._soldier_cache:
+        if not self._soldier_cache or self._soldier_cache_stale():
             self.refresh_soldiers()
         return list(self._soldier_cache.values())
 
     def _get_soldier(self, handle: str) -> Optional[Dict]:
-        if not self._soldier_cache:
+        if not self._soldier_cache or self._soldier_cache_stale():
             self.refresh_soldiers()
         return self._soldier_cache.get(handle)
 
