@@ -330,15 +330,28 @@ class UpdateService:
     # -------------------------------------------------------------
     def get_available_months(self) -> List[Tuple[int, int]]:
         try:
-            resp = self.supabase.table("posts").select("posted_at").order("posted_at", desc=True).execute()
+            page_size = 1000
+            start_idx = 0
             months = set()
-            if resp.data:
-                for row in resp.data:
+            while True:
+                resp = (
+                    self.supabase
+                    .table("posts")
+                    .select("posted_at")
+                    .order("posted_at", desc=True)
+                    .range(start_idx, start_idx + page_size - 1)
+                    .execute()
+                )
+                batch = resp.data or []
+                for row in batch:
                     if not row.get("posted_at"):
                         continue
                     d = datetime.fromisoformat(row["posted_at"].replace("Z", "+00:00")).date()
                     _, end = current_kpi_window_for_date(d)
                     months.add((end.year, end.month))
+                if len(batch) < page_size:
+                    break
+                start_idx += page_size
             return sorted(list(months), reverse=True)
         except Exception:
             return []
@@ -346,8 +359,26 @@ class UpdateService:
     def _fetch_posts_range(self, start: date, end: date) -> List[Dict]:
         start_iso = datetime.combine(start, time.min).replace(tzinfo=timezone.utc).isoformat()
         end_iso = datetime.combine(end, time.max).replace(tzinfo=timezone.utc).isoformat()
-        resp = self.supabase.table("posts").select("*").gte("posted_at", start_iso).lte("posted_at", end_iso).execute()
-        return resp.data or []
+        page_size = 1000
+        start_idx = 0
+        rows: List[Dict] = []
+        while True:
+            resp = (
+                self.supabase
+                .table("posts")
+                .select("*")
+                .gte("posted_at", start_iso)
+                .lte("posted_at", end_iso)
+                .order("posted_at", desc=True)
+                .range(start_idx, start_idx + page_size - 1)
+                .execute()
+            )
+            batch = resp.data or []
+            rows.extend(batch)
+            if len(batch) < page_size:
+                break
+            start_idx += page_size
+        return rows
 
     def _aggregate_range(self, start: date, end: date) -> List[Dict]:
         posts = self._fetch_posts_range(start, end)
