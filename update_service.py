@@ -237,6 +237,9 @@ class UpdateService:
                 is_i_status = True
             elif normalized_url and "/i/status/" in normalized_url:
                 is_i_status = True
+            
+            i_status_url = f"https://x.com/i/status/{tweet_id}"
+            canonical_urls = {normalized_url, f"{normalized_url}#auto-se", i_status_url, f"{i_status_url}#auto-se"}
 
             # Enforce link belongs to selected soldier
             profile_handle = self._extract_profile_handle(soldier.get("profile_url"))
@@ -245,13 +248,13 @@ class UpdateService:
             if url_handle and url_handle.lower() != "i" and soldier_handles and url_handle.lower() not in soldier_handles:
                 return False, "Link handle does not match selected soldier."
 
-            # Prevent duplicates by tweet_id for this soldier
+            # Prevent duplicates for this soldier
             existing = (
                 self.supabase
                 .table("posts")
                 .select("id,url,category")
                 .eq("soldier_id", soldier["id"])
-                .ilike("url", f"%{tweet_id}%")
+                .in_("url", list(canonical_urls))
                 .execute()
             )
             if existing.data:
@@ -261,7 +264,7 @@ class UpdateService:
                     .table("posts")
                     .delete()
                     .eq("soldier_id", soldier["id"])
-                    .ilike("url", f"%{tweet_id}%")
+                    .in_("url", list(canonical_urls))
                     .execute()
                 )
                 if getattr(cleanup, "error", None):
@@ -269,9 +272,14 @@ class UpdateService:
 
             # Prevent duplicate /i/status links across all soldiers
             if is_i_status:
-                global_existing = self.supabase.table("posts").select("id").ilike("url", f"%{tweet_id}%").execute()
+                global_existing = self.supabase.table("posts").select("id").in_("url", list(canonical_urls)).execute()
                 if global_existing.data:
                     return False, "This link has already been submitted by another soldier."
+                if not url_handle or url_handle.lower() == "i":
+                    pattern = f"%/status/{tweet_id}%"
+                    pattern_existing = self.supabase.table("posts").select("id").ilike("url", pattern).execute()
+                    if pattern_existing.data:
+                        return False, "This link has already been submitted by another soldier."
 
             # Fetch meta only if allowed; otherwise rely on provided posted_at
             meta = self.fetch_tweet_meta(content_url) if use_auto_fetch else {}
@@ -552,42 +560,45 @@ class UpdateService:
                 return False, "Not authorized"
 
             url = record.get("url") or ""
-            category = record.get("category") or ""
             base_url = url.replace("#auto-se", "")
             auto_url = f"{base_url}#auto-se"
-            is_auto = url.endswith("#auto-se")
-            tweet_id = self.extract_handle_and_id(base_url)[1] if base_url else None
+            tweet_id = None
+            if base_url:
+                tweet_id = self.extract_handle_and_id(base_url)[1]
+            if not tweet_id:
+                tweet_id = self.extract_handle_and_id(url)[1]
+            i_status_url = f"https://x.com/i/status/{tweet_id}" if tweet_id else None
+            canonical_urls = {base_url, auto_url}
+            if i_status_url:
+                canonical_urls.update({i_status_url, f"{i_status_url}#auto-se"})
+            canonical_urls = [u for u in canonical_urls if u]
 
             # Delete the requested row
             resp = self.supabase.table("posts").delete().eq("id", post_id).execute()
             if getattr(resp, "error", None):
                 return False, f"Error: {resp.error}"
 
-            # Clean up paired auto/primary entries
-            if is_auto:
-                cleanup = self.supabase.table("posts").delete().eq("soldier_id", record["soldier_id"]).eq("url", base_url).execute()
-                if getattr(cleanup, "error", None):
-                    return False, f"Error: {cleanup.error}"
-            elif category == "TM":
-                cleanup = self.supabase.table("posts").delete().eq("soldier_id", record["soldier_id"]).eq("url", auto_url).execute()
-                if getattr(cleanup, "error", None):
-                    return False, f"Error: {cleanup.error}"
-
-            # Remove any remaining rows for this tweet id (prevents duplicate rejections)
-            if tweet_id:
-                cleanup = (
-                    self.supabase
-                    .table("posts")
-                    .delete()
-                    .eq("soldier_id", record["soldier_id"])
-                    .ilike("url", f"%{tweet_id}%")
-                    .execute()
-                )
-                if getattr(cleanup, "error", None):
-                    return False, f"Error: {cleanup.error}"
+            # Clean up paired/variant entries (handle + /i/ + auto)
+            cleanup = (
+                self.supabase
+                .table("posts")
+                .delete()
+                .eq("soldier_id", record["soldier_id"])
+                .in_("url", list(canonical_urls))
+                .execute()
+            )
+            if getattr(cleanup, "error", None):
+                return False, f"Error: {cleanup.error}"
 
             # Confirm deletion
-            check = self.supabase.table("posts").select("id").eq("soldier_id", record["soldier_id"]).ilike("url", f"%{tweet_id}%").execute()
+            check = (
+                self.supabase
+                .table("posts")
+                .select("id")
+                .eq("soldier_id", record["soldier_id"])
+                .in_("url", list(canonical_urls))
+                .execute()
+            )
             if getattr(check, "error", None):
                 return False, f"Error: {check.error}"
             if check.data:
