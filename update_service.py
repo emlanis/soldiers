@@ -257,18 +257,6 @@ class UpdateService:
                 .in_("url", list(canonical_urls))
                 .execute()
             )
-            if existing.data:
-                # Clean up any stale rows for this tweet id, then proceed
-                cleanup = (
-                    self.supabase
-                    .table("posts")
-                    .delete()
-                    .eq("soldier_id", soldier["id"])
-                    .in_("url", list(canonical_urls))
-                    .execute()
-                )
-                if getattr(cleanup, "error", None):
-                    return False, f"Error: {cleanup.error}"
 
             # Prevent duplicate /i/status links across all soldiers
             if is_i_status:
@@ -301,6 +289,18 @@ class UpdateService:
             # Normalize to UTC naive -> aware
             if posted_at_final.tzinfo is None:
                 posted_at_final = posted_at_final.replace(tzinfo=timezone.utc)
+            if existing.data:
+                cleanup = (
+                    self.supabase
+                    .table("posts")
+                    .delete()
+                    .eq("soldier_id", soldier["id"])
+                    .in_("url", list(canonical_urls))
+                    .execute()
+                )
+                if getattr(cleanup, "error", None):
+                    return False, f"Error: {cleanup.error}"
+
 
             # Prepare meta, ensuring JSON-serializable payload
             safe_raw_meta = dict(meta) if meta else {}
