@@ -792,11 +792,17 @@ elif page == "🛡️ Sergeant Console":
             posted_at = row.get("posted_at")
             if isinstance(posted_at, str):
                 try:
-                    return datetime.fromisoformat(posted_at.replace("Z", "+00:00")).date()
+                    dt = datetime.fromisoformat(posted_at.replace("Z", "+00:00"))
+                    if dt.tzinfo is None:
+                        dt = dt.replace(tzinfo=timezone.utc)
+                    return dt.astimezone(timezone.utc).date()
                 except Exception:
                     return None
             if isinstance(posted_at, datetime):
-                return posted_at.date()
+                dt = posted_at
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                return dt.astimezone(timezone.utc).date()
             return None
 
         date_filter_mode = filter_cols[1].selectbox(
