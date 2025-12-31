@@ -182,8 +182,16 @@ def persist_auth_session():
         <script>
         (function() {{
           const data = {payload};
-          localStorage.setItem("ss_access_token", data.access_token);
-          localStorage.setItem("ss_refresh_token", data.refresh_token);
+          let store;
+          try {{
+            store = window.parent.localStorage || window.localStorage;
+          }} catch (e) {{
+            store = window.localStorage;
+          }}
+          if (store) {{
+            store.setItem("ss_access_token", data.access_token);
+            store.setItem("ss_refresh_token", data.refresh_token);
+          }}
         }})();
         </script>
         """,
@@ -196,8 +204,16 @@ def clear_persisted_session():
         """
         <script>
         (function() {
-          localStorage.removeItem("ss_access_token");
-          localStorage.removeItem("ss_refresh_token");
+          let store;
+          try {
+            store = window.parent.localStorage || window.localStorage;
+          } catch (e) {
+            store = window.localStorage;
+          }
+          if (store) {
+            store.removeItem("ss_access_token");
+            store.removeItem("ss_refresh_token");
+          }
         })();
         </script>
         """,
@@ -275,8 +291,15 @@ def require_auth():
         <script>
         (function() {
           const parent = window.parent;
-          const access = localStorage.getItem("ss_access_token");
-          const refresh = localStorage.getItem("ss_refresh_token");
+          let store;
+          try {
+            store = parent.localStorage || window.localStorage;
+          } catch (e) {
+            store = window.localStorage;
+          }
+          if (!store) return;
+          const access = store.getItem("ss_access_token");
+          const refresh = store.getItem("ss_refresh_token");
           if (access && refresh && !parent.location.search.includes("access_token=")) {
             const url = new URL(parent.location.href);
             url.hash = "";
@@ -326,18 +349,26 @@ def require_auth():
         invite_type = invite_type[0] if invite_type else None
 
     if access_token and refresh_token:
-        auth_client.auth.set_session(access_token, refresh_token)
-        st.session_state.auth_session = {
-            "access_token": access_token,
-            "refresh_token": refresh_token,
-        }
-        persist_auth_session()
-        st.session_state.pending_password = True
-        st.session_state.pending_password_type = invite_type or "recovery"
         try:
-            st.query_params.clear()
+            auth_client.auth.set_session(access_token, refresh_token)
+            st.session_state.auth_session = {
+                "access_token": access_token,
+                "refresh_token": refresh_token,
+            }
+            persist_auth_session()
+            st.session_state.pending_password = True
+            st.session_state.pending_password_type = invite_type or "recovery"
+            try:
+                st.query_params.clear()
+            except Exception:
+                st.experimental_set_query_params()
         except Exception:
-            st.experimental_set_query_params()
+            st.session_state.pop("auth_session", None)
+            clear_persisted_session()
+            try:
+                st.query_params.clear()
+            except Exception:
+                st.experimental_set_query_params()
 
     if token_hash and invite_type:
         try:
