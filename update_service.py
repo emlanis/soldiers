@@ -25,6 +25,8 @@ QQ_THRESHOLDS: List[Tuple[int, int]] = [
     (35, 9),
 ]
 
+AUTO_SE_UNITS = 6
+
 
 def compute_qq_points(units: int) -> int:
     for upper, points in QQ_THRESHOLDS:
@@ -312,7 +314,7 @@ class UpdateService:
                     "soldier_id": soldier["id"],
                     "category": "SE",
                     "url": f"{normalized_url}#auto-se",
-                    "units": 6,
+                    "units": AUTO_SE_UNITS,
                     "posted_at": posted_at_final.isoformat(),
                     "submitted_at": datetime.now(timezone.utc).isoformat(),
                     **base_meta,
@@ -615,7 +617,7 @@ class UpdateService:
                         upd = self.supabase.table("posts").update({
                             "category": "SE",
                             "posted_at": posted_dt.isoformat(),
-                            "units": 6,
+                            "units": AUTO_SE_UNITS,
                         }).eq("id", auto.data[0]["id"]).execute()
                         if getattr(upd, "error", None):
                             return False, f"Error: {upd.error}"
@@ -624,7 +626,7 @@ class UpdateService:
                             "soldier_id": record["soldier_id"],
                             "category": "SE",
                             "url": auto_url,
-                            "units": 6,
+                            "units": AUTO_SE_UNITS,
                             "posted_at": posted_dt.isoformat(),
                             "submitted_at": datetime.now(timezone.utc).isoformat(),
                             "likes": 0,
