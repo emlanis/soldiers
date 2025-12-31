@@ -490,6 +490,7 @@ def require_auth():
                         except Exception as e:
                             st.error(f"Password update failed: {e}")
         else:
+            st.form("invite_wait_form").form_submit_button("Waiting for invite")
             st.info("Waiting for invite redirect. Open your invite link first.")
 
     st.stop()
