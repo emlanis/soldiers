@@ -220,13 +220,23 @@ class UpdateService:
             if category not in {"TM", "SE", "SH"}:
                 return False, "Invalid category."
 
-            resolved_url, url_handle, url_tweet_id = self.resolve_x_url(content_url)
-            if not url_tweet_id:
+            resolved_url, url_handle, tweet_id = self.resolve_x_url(content_url)
+            raw_handle, raw_tweet_id = self.extract_handle_and_id(content_url)
+            tweet_id = tweet_id or raw_tweet_id
+            if not tweet_id:
                 return False, "Invalid X link format."
 
             normalized_url = self.normalize_x_url(resolved_url or content_url)
             if not normalized_url:
                 return False, "Invalid X link format."
+
+            is_i_status = False
+            if raw_handle and raw_handle.lower() == "i":
+                is_i_status = True
+            elif url_handle and url_handle.lower() == "i":
+                is_i_status = True
+            elif normalized_url and "/i/status/" in normalized_url:
+                is_i_status = True
 
             # Enforce link belongs to selected soldier
             profile_handle = self._extract_profile_handle(soldier.get("profile_url"))
@@ -241,7 +251,7 @@ class UpdateService:
                 .table("posts")
                 .select("id,url,category")
                 .eq("soldier_id", soldier["id"])
-                .ilike("url", f"%{url_tweet_id}%")
+                .ilike("url", f"%{tweet_id}%")
                 .execute()
             )
             if existing.data:
@@ -251,15 +261,15 @@ class UpdateService:
                     .table("posts")
                     .delete()
                     .eq("soldier_id", soldier["id"])
-                    .ilike("url", f"%{url_tweet_id}%")
+                    .ilike("url", f"%{tweet_id}%")
                     .execute()
                 )
                 if getattr(cleanup, "error", None):
                     return False, f"Error: {cleanup.error}"
 
             # Prevent duplicate /i/status links across all soldiers
-            if url_handle and url_handle.lower() == "i":
-                global_existing = self.supabase.table("posts").select("id").ilike("url", f"%{url_tweet_id}%").execute()
+            if is_i_status:
+                global_existing = self.supabase.table("posts").select("id").ilike("url", f"%{tweet_id}%").execute()
                 if global_existing.data:
                     return False, "This link has already been submitted by another soldier."
 
@@ -384,6 +394,9 @@ class UpdateService:
 
     def _aggregate_range(self, start: date, end: date) -> List[Dict]:
         posts = self._fetch_posts_range(start, end)
+        return self._aggregate_posts(posts, start, end)
+
+    def _aggregate_posts(self, posts: List[Dict], start: date, end: date) -> List[Dict]:
         soldiers = self.get_soldiers()
         id_to_handle = {s["id"]: s["handle"] for s in soldiers}
         days_in_range = (end - start).days + 1
@@ -391,6 +404,17 @@ class UpdateService:
         agg: Dict[str, Dict] = {}
 
         for post in posts:
+            posted_raw = post.get("posted_at")
+            if not posted_raw:
+                continue
+            try:
+                posted_at = datetime.fromisoformat(posted_raw.replace("Z", "+00:00"))
+            except Exception:
+                continue
+            day_key = posted_at.date()
+            if day_key < start or day_key > end:
+                continue
+
             sid = post["soldier_id"]
             handle = id_to_handle.get(sid, "Unknown")
             if handle.lower() == "pgm" or handle == "Unknown":
@@ -406,8 +430,6 @@ class UpdateService:
                 }
             category = post.get("category")
             units = post.get("units", 0)
-            posted_at = datetime.fromisoformat(post["posted_at"].replace("Z", "+00:00"))
-            day_key = posted_at.date()
 
             if category == "TM":
                 agg[handle]["tm"] += units
@@ -434,9 +456,12 @@ class UpdateService:
 
     def get_leaderboards(self, year: int, month: int) -> Dict:
         windows = four_week_windows(year, month)
+        month_start = windows[0][0]
+        month_end = windows[-1][1]
+        month_posts = self._fetch_posts_range(month_start, month_end)
         weekly = []
         for start, end in windows:
-            weekly.append(self._aggregate_range(start, end))
+            weekly.append(self._aggregate_posts(month_posts, start, end))
 
         # Monthly = average of weekly scores and sum of units
         monthly_agg: Dict[str, Dict] = {}
