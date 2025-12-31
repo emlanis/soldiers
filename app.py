@@ -20,15 +20,11 @@ from supabase import create_client
 from update_service import UpdateService
 
 
-@st.cache_resource
 def get_update_service():
-    return UpdateService()
+    if "update_service" not in st.session_state:
+        st.session_state.update_service = UpdateService()
+    return st.session_state.update_service
 
-
-# Clear cache on app restart to ensure latest code is loaded
-if "service_initialized" not in st.session_state:
-    st.cache_resource.clear()
-    st.session_state.service_initialized = True
 
 service = get_update_service()
 
