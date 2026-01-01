@@ -540,9 +540,22 @@ if page == "✨ Submit Content":
         content_url = st.text_input("Content URL")
 
         today = datetime.now(timezone.utc).date()
-        kpi_start, kpi_end = current_kpi_window(today)
+        grace_days = 2
+        current_start, current_end = current_kpi_window(today)
+        prev_end = current_start - timedelta(days=1)
+        prev_start = prev_end - timedelta(days=27)
+
+        window_labels = [f"Current KPI window: {current_start} to {current_end}"]
+        window_values = [(current_start, current_end)]
+        if today <= prev_end + timedelta(days=grace_days):
+            window_labels.append(f"Previous KPI window (late submit): {prev_start} to {prev_end}")
+            window_values.append((prev_start, prev_end))
+
+        window_idx = st.selectbox("Submission window", range(len(window_labels)), format_func=lambda i: window_labels[i])
+        kpi_start, kpi_end = window_values[window_idx]
+
         default_date = min(max(today, kpi_start), kpi_end)
-        st.caption(f"Submissions allowed only for the current KPI month: {kpi_start} to {kpi_end} (UTC).")
+        st.caption(f"Submissions allowed for: {kpi_start} to {kpi_end} (UTC).")
         posted_date = st.date_input(
             "Posted date (UTC)",
             value=default_date,
@@ -559,7 +572,7 @@ if page == "✨ Submit Content":
             elif not confirm:
                 st.error("Please confirm category and posted date are correct.")
             elif posted_date < kpi_start or posted_date > kpi_end:
-                st.error(f"Posted date must be within the current KPI month: {kpi_start} to {kpi_end} (UTC).")
+                st.error(f"Posted date must be within the selected KPI window: {kpi_start} to {kpi_end} (UTC).")
             else:
                 posted_at = datetime.combine(posted_date, dtime.min).replace(tzinfo=timezone.utc)
                 with st.spinner("Recording content..."):
