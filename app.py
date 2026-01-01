@@ -547,15 +547,24 @@ if page == "✨ Submit Content":
 
         window_labels = [f"Current KPI window: {current_start} to {current_end}"]
         window_values = [(current_start, current_end)]
-        if today <= prev_end + timedelta(days=grace_days):
-            window_labels.append(f"Previous KPI window (late submit): {prev_start} to {prev_end}")
+        late_deadline = prev_end + timedelta(days=grace_days)
+        if today <= late_deadline:
+            window_labels.append(
+                f"Previous KPI window (late submit until {late_deadline}): {prev_start} to {prev_end}"
+            )
             window_values.append((prev_start, prev_end))
 
         window_idx = st.selectbox("Submission window", range(len(window_labels)), format_func=lambda i: window_labels[i])
         kpi_start, kpi_end = window_values[window_idx]
 
         default_date = min(max(today, kpi_start), kpi_end)
-        st.caption(f"Submissions allowed for: {kpi_start} to {kpi_end} (UTC).")
+        st.caption(
+            f"Posted date must be within the selected KPI window: {kpi_start} to {kpi_end} (UTC)."
+        )
+        if len(window_labels) > 1:
+            st.caption(
+                f"Late submissions are open until {late_deadline} (UTC), but the posted date must stay inside the selected window."
+            )
         posted_date = st.date_input(
             "Posted date (UTC)",
             value=default_date,
