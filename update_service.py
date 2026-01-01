@@ -405,6 +405,7 @@ class UpdateService:
         page_size = 1000
         start_idx = 0
         rows: List[Dict] = []
+        seen_ids = set()
         while True:
             resp = (
                 self.supabase
@@ -413,11 +414,17 @@ class UpdateService:
                 .gte("posted_at", start_iso)
                 .lte("posted_at", end_iso)
                 .order("posted_at", desc=True)
+                .order("id", desc=True)
                 .range(start_idx, start_idx + page_size - 1)
                 .execute()
             )
             batch = resp.data or []
-            rows.extend(batch)
+            for row in batch:
+                row_id = row.get("id")
+                if row_id in seen_ids:
+                    continue
+                seen_ids.add(row_id)
+                rows.append(row)
             if len(batch) < page_size:
                 break
             start_idx += page_size
@@ -550,6 +557,7 @@ class UpdateService:
         page_size = 1000
         start = 0
         rows: List[Dict] = []
+        seen_ids = set()
         while True:
             resp = (
                 self.supabase
@@ -557,11 +565,17 @@ class UpdateService:
                 .select("*")
                 .in_("soldier_id", ids)
                 .order("posted_at", desc=True)
+                .order("id", desc=True)
                 .range(start, start + page_size - 1)
                 .execute()
             )
             batch = resp.data or []
-            rows.extend(batch)
+            for row in batch:
+                row_id = row.get("id")
+                if row_id in seen_ids:
+                    continue
+                seen_ids.add(row_id)
+                rows.append(row)
             if len(batch) < page_size:
                 break
             start += page_size
