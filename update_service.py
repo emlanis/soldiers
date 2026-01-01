@@ -255,24 +255,53 @@ class UpdateService:
             if url_handle and url_handle.lower() != "i" and soldier_handles and url_handle.lower() not in soldier_handles:
                 return False, "Link handle does not match selected soldier."
 
-            # Prevent duplicates for this soldier
-            existing = (
+            pattern = None
+            if tweet_id and (is_i_status or not url_handle or url_handle.lower() == "i"):
+                pattern = f"%/status/{tweet_id}%"
+
+            existing_same = (
                 self.supabase
                 .table("posts")
-                .select("id,url,category")
+                .select("id")
                 .eq("soldier_id", soldier["id"])
                 .in_("url", list(canonical_urls))
                 .execute()
             )
+            if existing_same.data:
+                return False, "This link has already been submitted."
+            if pattern:
+                pattern_same = (
+                    self.supabase
+                    .table("posts")
+                    .select("id")
+                    .eq("soldier_id", soldier["id"])
+                    .ilike("url", pattern)
+                    .execute()
+                )
+                if pattern_same.data:
+                    return False, "This link has already been submitted."
 
             # Prevent duplicate /i/status links across all soldiers
             if is_i_status:
-                global_existing = self.supabase.table("posts").select("id").in_("url", list(canonical_urls)).execute()
+                global_existing = (
+                    self.supabase
+                    .table("posts")
+                    .select("id")
+                    .neq("soldier_id", soldier["id"])
+                    .in_("url", list(canonical_urls))
+                    .execute()
+                )
                 if global_existing.data:
                     return False, "This link has already been submitted by another soldier."
-                if not url_handle or url_handle.lower() == "i":
-                    pattern = f"%/status/{tweet_id}%"
-                    pattern_existing = self.supabase.table("posts").select("id").ilike("url", pattern).execute()
+                if pattern:
+                    pattern_existing = (
+                        self.supabase
+                        .table("posts")
+                        .select("id")
+                        .neq("soldier_id", soldier["id"])
+                        .ilike("url", pattern)
+                        .execute()
+                    )
                     if pattern_existing.data:
                         return False, "This link has already been submitted by another soldier."
 
@@ -296,19 +325,6 @@ class UpdateService:
             # Normalize to UTC naive -> aware
             if posted_at_final.tzinfo is None:
                 posted_at_final = posted_at_final.replace(tzinfo=timezone.utc)
-            if existing.data:
-                cleanup = (
-                    self.supabase
-                    .table("posts")
-                    .delete()
-                    .eq("soldier_id", soldier["id"])
-                    .in_("url", list(canonical_urls))
-                    .execute()
-                )
-                if getattr(cleanup, "error", None):
-                    return False, f"Error: {cleanup.error}"
-
-
             # Prepare meta, ensuring JSON-serializable payload
             safe_raw_meta = dict(meta) if meta else {}
             if "posted_at" in safe_raw_meta and isinstance(safe_raw_meta["posted_at"], datetime):
