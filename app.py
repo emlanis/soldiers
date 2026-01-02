@@ -919,11 +919,33 @@ elif page == "🛡️ Sergeant Console":
         if selected_category != "All":
             posts = [p for p in posts if p.get("category") == selected_category]
 
+        search_query = st.text_input(
+            "Search link or tweet ID",
+            placeholder="Paste link or tweet id",
+            key="sergeant_search",
+        )
+        if search_query:
+            q = search_query.strip()
+            if q:
+                search_id = None
+                if q.isdigit():
+                    search_id = q
+                else:
+                    _, maybe_id = service.extract_handle_and_id(q)
+                    if maybe_id:
+                        search_id = maybe_id
+                if search_id:
+                    posts = [p for p in posts if search_id in (p.get("url") or "")]
+                else:
+                    q_lower = q.lower()
+                    posts = [p for p in posts if q_lower in (p.get("url") or "").lower()]
+
         filter_key = (
             tuple(chosen_soldiers),
             date_filter_mode,
             date_range,
             selected_category,
+            search_query,
         )
         if st.session_state.get("posts_filter_key") != filter_key:
             st.session_state.posts_filter_key = filter_key
