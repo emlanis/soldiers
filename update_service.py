@@ -276,7 +276,13 @@ class UpdateService:
             profile_handle = self._extract_profile_handle(soldier.get("profile_url"))
             soldier_handles = {h.lower() for h in [soldier_handle, profile_handle] if h}
 
-            if url_handle and url_handle.lower() != "i" and soldier_handles and url_handle.lower() not in soldier_handles:
+            if (
+                not is_i_status
+                and url_handle
+                and url_handle.lower() != "i"
+                and soldier_handles
+                and url_handle.lower() not in soldier_handles
+            ):
                 return False, "Link handle does not match selected soldier."
 
             pattern = None
