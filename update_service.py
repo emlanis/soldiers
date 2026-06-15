@@ -5,10 +5,15 @@ from typing import Dict, List, Optional, Tuple
 
 from dotenv import load_dotenv
 from supabase import create_client
+try:
+    from postgrest.exceptions import APIError
+except Exception:  # pragma: no cover - keeps imports tolerant across package versions
+    APIError = Exception
 import streamlit as st
 import requests
 import re
 
+# Load local .env values so the service can read Supabase and optional X API keys.
 load_dotenv()
 
 
@@ -29,13 +34,36 @@ QQ_THRESHOLDS: List[Tuple[int, int]] = [
 AUTO_SE_UNITS = 3
 
 
+class DatabaseSetupError(RuntimeError):
+    """Raised when Supabase is missing a table required by the app."""
+
+
+def _missing_table_name(exc: Exception) -> Optional[str]:
+    """Return the missing table name from a PostgREST schema-cache error."""
+    details = getattr(exc, "args", [{}])[0]
+    if not isinstance(details, dict) or details.get("code") != "PGRST205":
+        return None
+    message = details.get("message", "")
+    match = re.search(r"table 'public\.([^']+)'", message)
+    return match.group(1) if match else "required table"
+
+
+def _setup_error_message(table_name: str) -> str:
+    return (
+        f"Supabase is missing the `{table_name}` table required by this app. "
+        "Run `docs/supabase_schema.sql` in the Supabase SQL editor, then reload the app."
+    )
+
+
 def compute_qq_points(units: int) -> int:
+    """Convert a soldier's daily unit total into the QQ point score for that day."""
     for upper, points in QQ_THRESHOLDS:
         if units <= upper:
             return points
     return 10
 
 
+# First day of the custom KPI calendar; every KPI month is counted from here.
 KPI_ANCHOR_START = date(2025, 11, 30)
 
 
@@ -49,6 +77,7 @@ def _kpi_month_window(target_date: date) -> Tuple[date, date]:
 
 
 def current_kpi_window_for_date(target_date: date) -> Tuple[date, date]:
+    """Return the KPI month window that contains a specific date."""
     return _kpi_month_window(target_date)
 
 
@@ -86,13 +115,24 @@ def kpi_week_windows(year: int, month: int) -> List[Tuple[date, date]]:
 
 
 class UpdateService:
+    """Data access layer for soldiers, posts, leaderboards, and admin edits."""
+
     def __init__(self):
+        # Read Supabase settings from environment first, then Streamlit secrets.
         url = os.getenv("SUPABASE_URL") or st.secrets.get("SUPABASE_URL")
-        key = os.getenv("SUPABASE_ANON_KEY") or st.secrets.get("SUPABASE_ANON_KEY")
+        key = (
+            os.getenv("SUPABASE_ANON_KEY")
+            or os.getenv("SUPABASE_KEY")
+            or st.secrets.get("SUPABASE_ANON_KEY")
+            or st.secrets.get("SUPABASE_KEY")
+        )
         if not url or not key:
             raise ValueError("SUPABASE_URL and SUPABASE_ANON_KEY must be set")
 
+        # Keep one Supabase client on this service instance.
         self.supabase = create_client(url, key)
+
+        # Cache soldiers and available KPI months to avoid repeated database reads.
         self._soldier_cache: Dict[str, Dict] = {}
         self._last_soldier_refresh = None
         self._available_months_cache: List[Tuple[int, int]] = []
@@ -103,6 +143,7 @@ class UpdateService:
         self.worker_endpoint = os.getenv("WORKER_TWEET_META_ENDPOINT")
 
     def _invalidate_available_months_cache(self) -> None:
+        """Clear month cache after posts are inserted, updated, or deleted."""
         self._available_months_cache = []
         self._available_months_cached_at = None
 
@@ -110,21 +151,31 @@ class UpdateService:
     # Soldier helpers
     # -------------------------------------------------------------
     def _soldier_cache_stale(self) -> bool:
+        """Return True when the soldier cache is missing or older than five minutes."""
         if not self._last_soldier_refresh:
             return True
         return datetime.now(timezone.utc) - self._last_soldier_refresh > timedelta(minutes=5)
 
     def refresh_soldiers(self):
-        resp = self.supabase.table("soldiers").select("id, handle, profile_url").execute()
+        """Reload soldiers from Supabase and skip the PGM placeholder account."""
+        try:
+            resp = self.supabase.table("soldiers").select("id, handle, profile_url").execute()
+        except APIError as e:
+            missing = _missing_table_name(e)
+            if missing:
+                raise DatabaseSetupError(_setup_error_message(missing)) from e
+            raise
         self._soldier_cache = {row["handle"]: row for row in resp.data if row.get("handle", "").lower() != "pgm"} if resp.data else {}
         self._last_soldier_refresh = datetime.now(timezone.utc)
 
     def get_soldiers(self) -> List[Dict]:
+        """Return all cached soldiers, refreshing first when needed."""
         if not self._soldier_cache or self._soldier_cache_stale():
             self.refresh_soldiers()
         return list(self._soldier_cache.values())
 
     def _get_soldier(self, handle: str) -> Optional[Dict]:
+        """Find a soldier by handle using the refreshed cache."""
         if not self._soldier_cache or self._soldier_cache_stale():
             self.refresh_soldiers()
         return self._soldier_cache.get(handle)
@@ -133,6 +184,7 @@ class UpdateService:
     # Tweet meta fetching (worker preferred, X API fallback)
     # -------------------------------------------------------------
     def extract_handle_and_id(self, url: str) -> Tuple[Optional[str], Optional[str]]:
+        """Parse an X/Twitter status URL into a handle and tweet ID."""
         try:
             parsed = requests.utils.urlparse(url)
             path_parts = [p for p in parsed.path.split("/") if p]
@@ -148,6 +200,7 @@ class UpdateService:
             return None, None
 
     def resolve_x_url(self, url: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+        """Resolve shortened /i/status URLs to their final X URL when possible."""
         handle, tweet_id = self.extract_handle_and_id(url)
         if handle and handle.lower() != "i":
             return url, handle, tweet_id
@@ -167,6 +220,7 @@ class UpdateService:
         return None, None, tweet_id
 
     def normalize_x_url(self, url: str) -> Optional[str]:
+        """Convert accepted X URL formats into a single canonical URL style."""
         handle, tweet_id = self.extract_handle_and_id(url)
         if not handle or not tweet_id:
             return None
@@ -176,6 +230,7 @@ class UpdateService:
         return f"https://x.com/{handle_norm}/status/{tweet_id}"
 
     def _fetch_from_x_api(self, url: str) -> Dict:
+        """Fetch tweet creation date and public metrics from the X API when configured."""
         if not self.x_bearer_token:
             return {}
         _, tweet_id = self.extract_handle_and_id(url)
@@ -223,6 +278,7 @@ class UpdateService:
     # Submission
     # -------------------------------------------------------------
     def _extract_profile_handle(self, profile_url: Optional[str]) -> Optional[str]:
+        """Read the X handle from a soldier profile URL stored in Supabase."""
         if not profile_url:
             return None
         try:
@@ -233,11 +289,14 @@ class UpdateService:
             return None
 
     def add_content(self, soldier_handle: str, content_url: str, category_label: str, posted_at: Optional[datetime], use_auto_fetch: bool = False):
+        """Validate and insert a submitted X link, including the auto-SE row for TM posts."""
         try:
+            # Make sure the selected soldier exists before accepting the submission.
             soldier = self._get_soldier(soldier_handle)
             if not soldier:
                 return False, "Soldier not found. Refresh and try again."
 
+            # Convert user-facing category labels into the short database codes.
             category_map = {
                 "Thread": "TM",
                 "Thread/Meme": "TM",
@@ -251,6 +310,7 @@ class UpdateService:
             if category not in {"TM", "SE", "SH"}:
                 return False, "Invalid category."
 
+            # Resolve, parse, and normalize the X link before duplicate checks.
             resolved_url, url_handle, tweet_id = self.resolve_x_url(content_url)
             raw_handle, raw_tweet_id = self.extract_handle_and_id(content_url)
             tweet_id = tweet_id or raw_tweet_id
@@ -269,6 +329,8 @@ class UpdateService:
             elif normalized_url and "/i/status/" in normalized_url:
                 is_i_status = True
             
+            # Check all known URL variants because the same post can be submitted as
+            # handle/status, /i/status, or as the paired auto-SE URL.
             i_status_url = f"https://x.com/i/status/{tweet_id}"
             canonical_urls = {normalized_url, f"{normalized_url}#auto-se", i_status_url, f"{i_status_url}#auto-se"}
 
@@ -394,8 +456,14 @@ class UpdateService:
             result = self.supabase.table("posts").upsert(rows, on_conflict="soldier_id,url").execute()
             if result.data is None:
                 return False, "Insert failed"
+            # New posts can create new available KPI month labels.
             self._invalidate_available_months_cache()
             return True, "Content recorded with posted date"
+        except APIError as e:
+            missing = _missing_table_name(e)
+            if missing:
+                return False, _setup_error_message(missing)
+            return False, f"Error: {str(e)}"
         except Exception as e:
             return False, f"Error: {str(e)}"
 
@@ -403,8 +471,10 @@ class UpdateService:
     # Date windows and aggregation
     # -------------------------------------------------------------
     def get_available_months(self) -> List[Tuple[int, int]]:
+        """Return KPI month labels that have submissions, newest first."""
         try:
             now = datetime.now(timezone.utc)
+            # Serve a recent cached result to keep the leaderboard page fast.
             if (
                 self._available_months_cache
                 and self._available_months_cached_at
@@ -416,6 +486,7 @@ class UpdateService:
             start_idx = 0
             months = set()
             while True:
+                # Page through all posts so large datasets are not truncated at 1000 rows.
                 resp = (
                     self.supabase
                     .table("posts")
@@ -428,6 +499,7 @@ class UpdateService:
                 for row in batch:
                     if not row.get("posted_at"):
                         continue
+                    # Convert each post date into its KPI month label.
                     d = datetime.fromisoformat(row["posted_at"].replace("Z", "+00:00")).date()
                     _, end = current_kpi_window_for_date(d)
                     months.add((end.year, end.month))
@@ -442,6 +514,7 @@ class UpdateService:
             return []
 
     def _fetch_posts_range(self, start: date, end: date) -> List[Dict]:
+        """Fetch all posts whose posted_at date falls inside the given UTC date range."""
         start_iso = datetime.combine(start, time.min).replace(tzinfo=timezone.utc).isoformat()
         end_iso = datetime.combine(end, time.max).replace(tzinfo=timezone.utc).isoformat()
         page_size = 1000
@@ -449,6 +522,7 @@ class UpdateService:
         rows: List[Dict] = []
         seen_ids = set()
         while True:
+            # Read one page at a time and protect against duplicate rows across pages.
             resp = (
                 self.supabase
                 .table("posts")
@@ -473,10 +547,12 @@ class UpdateService:
         return rows
 
     def _aggregate_range(self, start: date, end: date) -> List[Dict]:
+        """Fetch posts for a range and aggregate them into leaderboard rows."""
         posts = self._fetch_posts_range(start, end)
         return self._aggregate_posts(posts, start, end)
 
     def _aggregate_posts(self, posts: List[Dict], start: date, end: date) -> List[Dict]:
+        """Group posts by soldier and calculate unit totals plus QQ rating."""
         soldiers = self.get_soldiers()
         id_to_handle = {s["id"]: s["handle"] for s in soldiers}
         days_in_range = (end - start).days + 1
@@ -484,6 +560,7 @@ class UpdateService:
         agg: Dict[str, Dict] = {}
 
         for post in posts:
+            # Skip malformed dates and posts outside the selected KPI window.
             posted_raw = post.get("posted_at")
             if not posted_raw:
                 continue
@@ -502,6 +579,7 @@ class UpdateService:
             if handle.lower() == "pgm" or handle == "Unknown":
                 continue
             if handle not in agg:
+                # Initialize this soldier's counters the first time we see a post.
                 agg[handle] = {
                     "handle": handle,
                     "tm": 0,
@@ -513,6 +591,7 @@ class UpdateService:
             category = post.get("category")
             units = post.get("units", 0)
 
+            # Count units separately by KPI category and also as a combined total.
             if category == "TM":
                 agg[handle]["tm"] += units
             elif category == "SE":
@@ -525,6 +604,7 @@ class UpdateService:
 
         # compute daily qq and weekly score
         for handle, data in agg.items():
+            # QQ rating is daily points divided by the maximum possible points.
             daily_points = 0
             for i in range(days_in_range):
                 d = start + timedelta(days=i)
@@ -537,6 +617,7 @@ class UpdateService:
         return leaderboard
 
     def get_leaderboards(self, year: int, month: int) -> Dict:
+        """Build weekly and monthly leaderboards for a selected KPI month label."""
         windows = kpi_week_windows(year, month)
         month_start = windows[0][0]
         month_end = windows[-1][1]
@@ -589,6 +670,7 @@ class UpdateService:
     # Admin helpers
     # -------------------------------------------------------------
     def get_posts_for_soldiers(self, handles: List[str]) -> List[Dict]:
+        """Return posts for the soldiers a sergeant/captain is allowed to manage."""
         if not handles:
             return []
         soldiers = self.get_soldiers()
@@ -601,6 +683,7 @@ class UpdateService:
         rows: List[Dict] = []
         seen_ids = set()
         while True:
+            # Fetch in pages because Supabase range queries return bounded batches.
             resp = (
                 self.supabase
                 .table("posts")
@@ -624,6 +707,7 @@ class UpdateService:
         return rows
 
     def delete_post(self, post_id: str, allowed_handles: List[str]) -> Tuple[bool, str]:
+        """Delete a post only if it belongs to one of the allowed soldiers."""
         try:
             soldiers = self.get_soldiers()
             handle_to_id = {s["handle"].lower(): s["id"] for s in soldiers}
@@ -640,6 +724,7 @@ class UpdateService:
             if record["soldier_id"] not in allowed_ids:
                 return False, "Not authorized"
 
+            # Build all URL forms that may represent this same X post.
             url = record.get("url") or ""
             base_url = url.replace("#auto-se", "")
             auto_url = f"{base_url}#auto-se"
@@ -684,6 +769,7 @@ class UpdateService:
                 return False, f"Error: {check.error}"
             if check.data:
                 return False, "Delete failed (row still exists)"
+            # Deleted posts may remove a month from the available KPI labels.
             self._invalidate_available_months_cache()
             return True, "Deleted"
         except Exception as e:
@@ -691,6 +777,7 @@ class UpdateService:
 
 
     def update_post(self, post_id: str, allowed_handles: List[str], category: str, posted_at: datetime, new_soldier_handle: Optional[str] = None) -> Tuple[bool, str]:
+        """Update date/category/soldier for a post while preserving auto-SE behavior."""
         try:
             soldiers = self.get_soldiers()
             handle_to_id = {s["handle"].lower(): s["id"] for s in soldiers}
@@ -707,6 +794,7 @@ class UpdateService:
             if record["soldier_id"] not in allowed_ids:
                 return False, "Not authorized"
 
+            # Accept either a date or datetime and store it as UTC.
             if isinstance(posted_at, date) and not isinstance(posted_at, datetime):
                 posted_dt = datetime.combine(posted_at, time.min).replace(tzinfo=timezone.utc)
             else:
@@ -717,10 +805,12 @@ class UpdateService:
             url = record.get("url") or ""
             base_url = url.replace("#auto-se", "")
             is_auto = url.endswith("#auto-se")
+            # Auto-SE entries must remain SE even if the edit form sends another category.
             new_category = "SE" if is_auto else category
 
             new_soldier_id = record["soldier_id"]
             if new_soldier_handle:
+                # Reassignment is allowed only to a valid soldier and only when it will not duplicate a link.
                 handle_key = new_soldier_handle.lower()
                 if handle_key not in handle_to_id:
                     return False, "Invalid soldier."
@@ -751,6 +841,8 @@ class UpdateService:
                 return False, f"Error: {resp.error}"
 
             if not is_auto:
+                # When the base post is TM, make sure its automatic SE companion exists.
+                # When the base post is no longer TM, remove that companion entry.
                 auto_url = f"{base_url}#auto-se"
                 if new_soldier_id != record["soldier_id"]:
                     delete_old_auto = (
@@ -819,12 +911,14 @@ class UpdateService:
                 pass
             if new_soldier_id != record["soldier_id"] and current.get("soldier_id") != new_soldier_id:
                 return False, "Update failed (soldier unchanged)"
+            # Date/category/soldier changes can move posts between KPI month labels.
             self._invalidate_available_months_cache()
             return True, "Updated"
         except Exception as e:
             return False, f"Error: {e}"
 
     def set_auth_session(self, access_token: str, refresh_token: str) -> None:
+        """Attach the logged-in user's JWT to Supabase requests for row-level security."""
         self.supabase.auth.set_session(access_token, refresh_token)
         # Ensure PostgREST requests use the authenticated JWT.
         try:
