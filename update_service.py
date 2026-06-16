@@ -37,36 +37,66 @@ def compute_qq_points(units: int) -> int:
 
 
 KPI_ANCHOR_START = date(2025, 11, 30)
+FIVE_WEEK_START_LABEL = (2026, 6)
+FIVE_WEEK_ANCHOR_START = date(2026, 5, 17)
+FIVE_WEEK_LENGTH_DAYS = 35
+FOUR_WEEK_LENGTH_DAYS = 28
 
 
-def _kpi_month_window(target_date: date) -> Tuple[date, date]:
-    """Continuous 28-day KPI windows anchored at 2025-11-30."""
+def _add_months(year: int, month: int, offset: int) -> Tuple[int, int]:
+    month_index = (year * 12 + (month - 1)) + offset
+    return month_index // 12, (month_index % 12) + 1
+
+
+def _months_between(start_label: Tuple[int, int], end_label: Tuple[int, int]) -> int:
+    return (end_label[0] - start_label[0]) * 12 + (end_label[1] - start_label[1])
+
+
+def _legacy_kpi_month_window(target_date: date) -> Tuple[date, date]:
+    """Original continuous 28-day KPI windows before the June 2026 5-week change."""
     days_from_anchor = (target_date - KPI_ANCHOR_START).days
-    window_index = days_from_anchor // 28
-    start = KPI_ANCHOR_START + timedelta(days=window_index * 28)
-    end = start + timedelta(days=27)
+    window_index = days_from_anchor // FOUR_WEEK_LENGTH_DAYS
+    start = KPI_ANCHOR_START + timedelta(days=window_index * FOUR_WEEK_LENGTH_DAYS)
+    end = start + timedelta(days=FOUR_WEEK_LENGTH_DAYS - 1)
     return start, end
 
 
 def current_kpi_window_for_date(target_date: date) -> Tuple[date, date]:
-    return _kpi_month_window(target_date)
+    if target_date >= FIVE_WEEK_ANCHOR_START:
+        window_index = (target_date - FIVE_WEEK_ANCHOR_START).days // FIVE_WEEK_LENGTH_DAYS
+        start = FIVE_WEEK_ANCHOR_START + timedelta(days=window_index * FIVE_WEEK_LENGTH_DAYS)
+        end = start + timedelta(days=FIVE_WEEK_LENGTH_DAYS - 1)
+        return start, end
+    return _legacy_kpi_month_window(target_date)
+
+
+def kpi_label_for_date(target_date: date) -> Tuple[int, int]:
+    if target_date >= FIVE_WEEK_ANCHOR_START:
+        window_index = (target_date - FIVE_WEEK_ANCHOR_START).days // FIVE_WEEK_LENGTH_DAYS
+        return _add_months(*FIVE_WEEK_START_LABEL, window_index)
+    _, end = _legacy_kpi_month_window(target_date)
+    return end.year, end.month
 
 
 def kpi_window_by_end_month(year: int, month: int) -> Tuple[date, date]:
-    """Map a calendar label (e.g. June 2026) to the KPI window whose END is in that month."""
+    """Return the KPI window for a month label; 5-week labels start at June 2026."""
+    label = (year, month)
+    if label >= FIVE_WEEK_START_LABEL:
+        window_index = _months_between(FIVE_WEEK_START_LABEL, label)
+        start = FIVE_WEEK_ANCHOR_START + timedelta(days=window_index * FIVE_WEEK_LENGTH_DAYS)
+        end = start + timedelta(days=FIVE_WEEK_LENGTH_DAYS - 1)
+        return start, end
+
     first = date(year, month, 1)
     last = date(year, month, monthrange(year, month)[1])
-    min_idx = ((first - KPI_ANCHOR_START).days // 28) - 2
-    max_idx = ((last - KPI_ANCHOR_START).days // 28) + 2
+    min_idx = ((first - KPI_ANCHOR_START).days // FOUR_WEEK_LENGTH_DAYS) - 2
+    max_idx = ((last - KPI_ANCHOR_START).days // FOUR_WEEK_LENGTH_DAYS) + 2
     for idx in range(min_idx, max_idx + 1):
-        start = KPI_ANCHOR_START + timedelta(days=idx * 28)
-        end = start + timedelta(days=27)
+        start = KPI_ANCHOR_START + timedelta(days=idx * FOUR_WEEK_LENGTH_DAYS)
+        end = start + timedelta(days=FOUR_WEEK_LENGTH_DAYS - 1)
         if end.year == year and end.month == month:
             return start, end
-    return _kpi_month_window(last)
-
-
-FIVE_WEEK_START_LABEL = (2026, 6)
+    return _legacy_kpi_month_window(last)
 
 
 def kpi_week_count_for_label(year: int, month: int) -> int:
@@ -429,8 +459,7 @@ class UpdateService:
                     if not row.get("posted_at"):
                         continue
                     d = datetime.fromisoformat(row["posted_at"].replace("Z", "+00:00")).date()
-                    _, end = current_kpi_window_for_date(d)
-                    months.add((end.year, end.month))
+                    months.add(kpi_label_for_date(d))
                 if len(batch) < page_size:
                     break
                 start_idx += page_size
