@@ -144,6 +144,17 @@ def get_secret(key: str, default: str = ""):
         return os.getenv(key, default)
 
 
+def is_truthy(value: object) -> bool:
+    return str(value).strip().lower() in {"1", "true", "yes", "on"}
+
+
+SUBMISSIONS_PAUSED = is_truthy(get_secret("SUBMISSIONS_PAUSED", "true"))
+SUBMISSIONS_PAUSE_MESSAGE = get_secret(
+    "SUBMISSIONS_PAUSE_MESSAGE",
+    "Secret Soldiers submissions are paused for now. The portal remains open for viewing leaderboards and records.",
+)
+
+
 _PROFILE_IMAGE_MAP: dict = {}
 
 
@@ -628,7 +639,10 @@ if page == "✨ Submit Content":
         )
     confirm = st.checkbox("I confirm the category and posted date are correct for this link.")
 
-    if st.button("Submit Content"):
+    if SUBMISSIONS_PAUSED:
+        st.warning(SUBMISSIONS_PAUSE_MESSAGE)
+
+    if st.button("Submit Content", disabled=SUBMISSIONS_PAUSED):
         if not content_url:
             st.error("Please enter a content URL")
         elif not soldier:

@@ -4,3 +4,4 @@ __pycache__/
 .env
 .DS_Store
 seed_users.sh
+backups/
